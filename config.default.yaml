@@ -1,0 +1,121 @@
+# Video Rough Cut Skill 默认配置
+# 所有剪辑与渲染参数集中于此，修改后重新运行即可生效。
+
+# ── 停顿压缩 ─────────────────────────────────────────────────────────────────
+pause_cut:
+  pause_threshold: 0.22       # 段间间隙≥该值才压缩（秒）；越低越容易剪掉气口（更紧）
+  target_pause_duration: 0.10 # 压缩后保留的停顿长度（秒）；越低成片节奏越紧
+  word_padding: 0.05          # 停顿区间两端向内缩进（秒），避免截断字音
+  keep_sentence_boundary_pause: true   # 句尾标点后的停顿使用更高阈值（见下）
+  sentence_boundary_pause_bonus: 0.22    # 句尾额外阈值加成（秒）；越大句间越不轻易压缩（更自然）
+  use_word_gaps: false          # 关闭：ASR word 时间戳为估算值时勿用语隙否则误触极多
+
+# ── VAD/边界解析 ─────────────────────────────────────────────────────────────
+vad:
+  noise_db: "-35dB"             # FFmpeg 静音检测阈值
+  min_silence_duration: 0.25    # 最短静音时长（秒）
+  min_speech_duration: 0.15     # 最短人声片段时长（秒）
+
+boundary_resolver:
+  require_provider_timestamps_for_llm_edits: true # LLM 删除必须基于真实 word timestamp
+  allow_estimated_content_cleanup_edits: true # ???????????????? cleanup ???
+  estimated_content_cleanup_min_confidence: 0.95 # estimated cleanup ????????
+  estimated_content_cleanup_max_duration: 2.5 # estimated cleanup ???????
+  align_to_vad: true             # 有真实时间戳时吸附到附近静音边界
+  max_boundary_shift: 0.2       # VAD 边界最大吸附距离（秒）
+
+# ── 语义去重（LLM） ──────────────────────────────────────────────────────────
+dedup:
+  similarity_threshold: 0.82   # LLM 重复判断相似度阈值（略降：在 provider 时间戳下更易删掉赘述）
+  max_auto_delete_duration: 4.0 # 语义去重自动删除最长秒数
+  semantic_window_seconds: 90.0 # 只比较此时间窗口内的近邻段
+  max_segment_chars: 600        # 送入 LLM 判断的最大字符数
+  context_window_segments: 2   # 重复检测时向前查看的段数
+  review_on_uncertain: true    # 不确定时标记 review_needed 而非自动删除
+
+# ── 低价值内容清理（LLM） ────────────────────────────────────────────────────
+content_cleanup:
+  auto_delete_enabled: true     # ?? cleanup ?????????? boundary_resolver ??????
+  min_confidence_to_delete: 0.93 # 开启自动删除时的最低置信度（建议偏高）
+  max_auto_delete_duration: 3.0  # 低价值片段自动删除最长秒数
+  boundary_guard: 0.25           # 删除边界向内收缩，避免切掉前后尾音
+  max_segment_chars: 300         # 单个 transcript 段最大输入字符数
+  review_on_uncertain: true      # 不确定时只进入 review_needed
+
+# ── 语义分段 ─────────────────────────────────────────────────────────────────
+semantic_segment:
+  min_duration: 5.0            # 语义段最短目标时长（秒）
+  target_max_duration: 15.0    # 语义段建议上限（秒）
+  hard_max_duration: 20.0      # 语义段强制上限（秒）
+
+# ── 剪辑模式覆盖，不选择则无效 ─────────────────────────────────────────────────────────────
+modes:
+  conservative:
+    pause_cut:
+      pause_threshold: 0.45     # 更少触发停顿压缩，更像「初剪保留气口」
+      target_pause_duration: 0.20
+      sentence_boundary_pause_bonus: 0.28
+    dedup:
+      similarity_threshold: 0.90 # 更少自动删重
+  standard:
+    pause_cut: {}               # 使用基础 pause_cut 配置（默认偏紧凑口播）
+    dedup: {}
+  aggressive:
+    pause_cut:
+      pause_threshold: 0.16     # 更强剪掉段间死气
+      target_pause_duration: 0.07
+      sentence_boundary_pause_bonus: 0.18
+    dedup:
+      similarity_threshold: 0.78 # 更易删掉相邻重复赘述
+
+# ── 字幕外观 ─────────────────────────────────────────────────────────────────
+# ASS 颜色格式：&HAABBGGRR（AA=透明度 00=不透明）
+subtitle:
+  play_res_x: 1920             # 视频宽度基准（需与实际视频分辨率一致）
+  play_res_y: 1080             # 视频高度基准
+  font_name: "Microsoft YaHei" # 字体名称（需系统已安装）
+  font_size: 32                # 字体大小（像素，相对 play_res）
+  primary_color: "&H0000FFFF"  # 字体颜色：黄色
+  outline_color: "&H00000000"  # 描边颜色：黑色
+  outline_width: 2             # 描边宽度
+  shadow_depth: 1              # 阴影深度（0=关闭）
+  alignment: 2                 # 2=底部居中（ASS alignment）
+  margin_v: 40                 # 距底部边距（像素）
+  margin_l: 30                 # 左边距（像素）
+  margin_r: 30                 # 右边距（像素）
+  max_chars_per_line: 15       # 每行最大字符数（中文），超出自动换行
+  max_lines: 2                 # 最多显示行数，超出截断
+
+# ── 视频渲染 ─────────────────────────────────────────────────────────────────
+render:
+  video_codec: "libx264"       # 视频编码器
+  audio_codec: "aac"           # 音频编码器
+  video_profile: "main"        # H264 profile（提高播放器兼容性）
+  video_level: "4.0"           # H264 level
+  crf: 23                      # H264 质量（18=高质量，28=小体积）
+  preset: "medium"             # 编码速度（ultrafast/fast/medium/slow）
+  pixel_format: "yuv420p"      # 像素格式（兼容性优先）
+  movflags: "+faststart"       # 将 moov 索引前置，提升播放器兼容性
+
+# ── 阿里云服务 ───────────────────────────────────────────────────────────────
+aliyun:
+  asr:
+    model: "qwen3-asr-flash"   # DashScope ASR 模型，可由 DASHSCOPE_ASR_MODEL 覆盖
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1" # ASR 接口基地址
+    enable_word_timestamps: false # 开启 Qwen-ASR FileTrans enable_words，返回 provider 词/字级时间戳
+    filetrans_model: "qwen3-asr-flash-filetrans" # 文件转写模型，可由 DASHSCOPE_ASR_FILETRANS_MODEL 覆盖
+    filetrans_api_url: "https://dashscope.aliyuncs.com/api/v1" # FileTrans 任务 API 基地址
+    filetrans_file_url: ""      # 可填公网 HTTP/HTTPS/oss:// URL；为空时尝试临时上传本地 audio.wav
+    filetrans_auto_upload: false # 使用 DashScope 临时 OSS 上传本地 audio.wav（仅适合单文件测试）
+    filetrans_poll_interval: 5  # FileTrans 异步任务轮询间隔（秒）
+    filetrans_poll_timeout: 900 # FileTrans 单任务最长等待时间（秒）
+    sample_rate: 16000         # 提取音频采样率（Hz）
+    format: "wav"              # 上传音频格式
+    enable_punctuation: true   # ASR 结果保留标点（预留配置）
+    enable_timestamp: true     # ASR 结果启用时间戳（预留配置）
+  llm:
+    model: "qwen-plus-latest"  # 通义千问模型（可由 DASHSCOPE_LLM_MODEL 覆盖）
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1" # LLM 接口基地址
+    temperature: 0.1           # 低温度保证判断稳定性
+    max_tokens: 2048           # LLM 响应最大 token
+    timeout_seconds: 60        # LLM 请求超时（秒）
