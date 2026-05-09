@@ -1,0 +1,250 @@
+# Video Rough Cut Skill 默认配置
+# 说明：
+# - 时间单位统一为秒。
+# - ASS 颜色格式为 &HAABBGGRR，不是常见的 RGB；例如 &H00FFFFFF 表示不透明白色。
+# - 字幕/叠字坐标基于 subtitle.play_res_x / subtitle.play_res_y，当前默认是 1080x1920 竖屏。
+# - 数值越小/越大是否更激进，已在对应项旁边说明。
+
+# ASR 总开关：决定转写使用哪个语音识别后端。
+asr:
+  provider: "funasr"          # 主 ASR 提供方。funasr=本地识别，速度取决于机器；aliyun=云端识别。
+  fallback_provider: "aliyun" # 主 ASR 失败时可选的备用 ASR。
+  allow_fallback: false       # 是否允许主 ASR 失败后自动切到 fallback_provider；false 更可控，true 更自动。
+
+# FunASR 本地识别配置。
+funasr:
+  model: "paraformer-zh"    # 中文 ASR 模型名；换模型会影响识别质量、速度和依赖下载。
+  vad_model: "fsmn-vad"     # FunASR 内部 VAD 模型，用于辅助切句/时间戳。
+  punc_model: "ct-punc"     # 标点恢复模型；影响 transcript 文本标点和后续语义切分。
+  device: "cpu"             # 推理设备。cpu 通用但慢；有 CUDA 环境时可改成 cuda 提速。
+  batch_size_s: 300         # 批处理音频时长。越大吞吐可能更好，但占用内存也更高。
+  sentence_timestamp: true  # 是否启用句级/词级时间信息；后续剪辑依赖精确时间戳，建议保持 true。
+  disable_update: true      # 禁止运行时自动检查/更新模型，保证 skill 执行稳定可复现。
+
+# 口气/停顿压缩配置：控制“短停顿是否剪掉、剪完保留多久”。
+pause_cut:
+  pause_threshold: 0.22              # 片段间停顿超过此值才压缩；越小越激进，越容易剪掉短停顿。
+  target_pause_duration: 0.04        # 停顿压缩后保留的时长；越小节奏越紧，太小可能显得抢。
+  word_padding: 0.01                 # 停顿两侧给字音保留的安全边；越小越贴边，太小可能切到尾音。
+  keep_sentence_boundary_pause: true # 句号/问号/感叹号后是否保留更多停顿，避免句间过紧。
+  sentence_boundary_pause_bonus: 0.22 # 句末停顿阈值额外加成；越大越保守，越小句间也会更紧。
+  use_word_gaps: true                # 是否检测同一 ASR 段内部的字间长停顿；true 能剪掉句内停顿。
+  word_gap_threshold: 0.80           # 字与字之间间隔超过此值才压缩；越小越激进，能处理更短停顿。
+  trim_edge_silence: true            # 是否压缩视频开头/结尾静音；通常建议 true。
+
+# FFmpeg silencedetect/VAD 配置：用于找静音段，并辅助剪辑边界吸附。
+vad:
+  noise_db: "-35dB"           # 低于该音量视为静音；数值越低越不敏感，越高越容易判静音。
+  min_silence_duration: 0.25  # 静音至少持续多久才算静音段；越小越敏感。
+  min_speech_duration: 0.15   # 语音段至少多长才保留；过滤很短的噪声/碎片。
+
+# 删除边界解析：把 LLM 给出的删除候选变成可安全执行的时间范围。
+boundary_resolver:
+  require_provider_timestamps_for_llm_edits: true # LLM 自动删除是否必须依赖 provider 级时间戳；true 更安全。
+  allow_estimated_content_cleanup_edits: true     # content_cleanup 在估算时间戳下是否允许高置信短删除。
+  estimated_content_cleanup_min_confidence: 0.95  # 估算时间戳下自动删除的最低置信度；越高越保守。
+  estimated_content_cleanup_max_duration: 2.5     # 估算时间戳下自动删除最长时长；越短越安全。
+  align_to_vad: true                              # 是否尝试把删除边界吸附到附近静音边缘。
+  max_boundary_shift: 0.2                         # VAD 边界吸附最大移动距离；越大越可能扩/缩到静音处。
+  semantic_delete_padding_before: 0.03            # 语义删除前向安全余量；用于避免留下开头爆破音。
+  semantic_delete_padding_after: 0.08             # 语义删除后向安全余量；用于避免留下尾音。
+
+# 语义去重/口误删除：让 LLM 判断重复、改口、false start 是否应删除。
+dedup:
+  enabled: true                                      # 是否启用语义删除；false 只做停顿压缩和字幕。
+  similarity_threshold: 0.82                         # 旧版相似度阈值；越低越激进，越高越保守。
+  max_auto_delete_duration: 4.0                      # 单个旧版自动删除片段最长时长。
+  semantic_window_seconds: 90.0                      # 语义检测窗口时长；越大上下文更多，但 LLM 输入更长。
+  max_segment_chars: 600                             # 单个语义片段传给 LLM 的最大字符数。
+  context_window_segments: 2                         # 旧版检测时带多少相邻段上下文。
+  review_on_uncertain: true                          # 不确定项是否进入 review_needed，而不是自动删除。
+  enable_local_refine: true                          # 旧版长重复段是否让 LLM 进一步细化局部删除范围。
+  local_refine_max_delete_duration: 3.0              # 局部细化单段最长删除时长。
+  local_refine_min_confidence: 0.90                  # 局部细化自动删除最低置信度。
+  local_refine_boundary_guard: 0.08                  # 局部细化删除范围两侧保护边，防止切太满。
+  local_refine_max_total_delete_duration_per_semantic_segment: 5.0 # 单个语义段内最多累计删除时长。
+  local_refine_review_items: true                    # 局部细化无法安全执行时是否记录 review。
+  local_refine_max_review_segments: 8                # 局部细化最多送审片段数，防止报告过长。
+  local_refine_allow_multiple_ranges_per_segment: false # 是否允许一个片段内多个删除范围；false 更安全。
+  local_refine_min_remaining_fragment_chars: 4       # 删除后剩余碎片少于该字数时倾向送审，避免残句。
+  unit_delete_min_confidence: 0.90                   # 语义单元删除最低置信度；越高越保守。
+  continuity_review_min_confidence: 0.90             # 删除后连贯性复核最低置信度。
+  max_auto_delete_unit_duration: 4.0                 # 单个 utterance unit 自动删除最长时长。
+  allow_partial_time_range_delete: false             # 是否允许 LLM 直接给任意时间范围；false 表示只能删完整编号单元。
+  unit_llm_chunk_size: 24                            # 每次送给 LLM 的语义单元数量；越大上下文多但更慢。
+
+# 局部口误/改口字级修剪：当“删完整 unit”失败但明显是口误时，回退到 provider 字边界细修。
+local_false_start_refine:
+  enabled: true                    # 是否启用字级局部修剪兜底。
+  max_window_units_before: 1       # 失败 unit 前带多少个 unit 给 LLM 判断。
+  max_window_units_after: 2        # 失败 unit 后带多少个 unit 给 LLM 判断。
+  min_confidence: 0.92             # 字级修剪候选最低置信度；越高越保守。
+  continuity_min_confidence: 0.90  # 字级修剪后连贯性复核最低置信度。
+  max_delete_duration: 4.0         # 单次字级修剪最长删除时长，防止误删大段内容。
+  min_remaining_chars: 6           # 修剪窗口删除后至少保留多少字，避免只剩残片。
+  allow_multiple_ranges: false     # 单个失败 review 是否允许多个删除范围；false 更安全。
+
+# 语义单元构建：把 transcript 切成编号 unit，供 LLM 删除判断。
+utterance_unit:
+  max_duration: 6.0               # 单个 unit 最长时长；越短 LLM 判断更细，但调用上下文更碎。
+  min_duration: 0.35              # 单个 unit 最短时长；太短会产生很多碎 unit。
+  word_gap_split_threshold: 0.45  # unit 内字间停顿超过此值会切开；越小越容易把句内停顿切成两个 unit。
+
+# ASR 原始段预切分：在语义分析前，先按长字间停顿拆 transcript segment。
+transcript_segment_split:
+  enabled: true            # 是否启用 ASR 段内长停顿拆分；建议 true，利于 false start 被单独识别。
+  word_gap_threshold: 0.5  # 字间停顿超过此值拆成新 segment；越小越细，越大越保守。
+  min_segment_duration: 0.35 # 拆出的 segment 最短时长，低于该值会避免拆得太碎。
+  min_segment_chars: 2       # 拆出的 segment 最少字符数，低于该值会避免生成孤字碎片。
+
+# 内容清理：额外让 LLM 找“废话/跑题/无效提醒”等可删内容；默认关闭以提速。
+content_cleanup:
+  enabled: false               # 是否启用内容清理 LLM。
+  auto_delete_enabled: false   # 内容清理是否允许自动删除；false 只审查不执行。
+  llm_review_enabled: false    # 是否让 LLM 产出 review 建议。
+  min_confidence_to_delete: 0.93 # 内容清理自动删除最低置信度。
+  max_auto_delete_duration: 3.0  # 内容清理单段自动删除最长时长。
+  boundary_guard: 0.25           # 内容清理删除范围两侧保护边。
+  max_segment_chars: 300         # 内容清理单段传给 LLM 的最大字符数。
+  review_on_uncertain: true      # 不确定项是否写入 review_needed。
+
+# 字幕文本纠错：只改字幕文字，不改时间轴。
+subtitle_correction:
+  enabled: true          # 是否启用字幕纠错 LLM。
+  max_segment_chars: 120 # 单条字幕传给 LLM 的最大字符数，防止输入过长。
+  context_segments: 1    # 字幕纠错时带前后各多少条上下文；越大更懂语义，但更慢。
+  max_context_chars: 80  # 每侧上下文最多字符数。
+  max_length_ratio: 1.6  # 修正后长度相对原文的最大/最小比例保护，避免扩写或大删。
+  min_similarity: 0.45   # 修正文本与原文最低相似度；越高越保守，越低越能修语义型错字。
+  chunk_size: 12         # 每次送给 LLM 的字幕条数；越大调用少，但单次上下文更长。
+
+# 语义段构建：把 transcript 聚合成中等长度段，供旧版语义检测/报告使用。
+semantic_segment:
+  min_duration: 5.0        # 语义段最短目标时长。
+  target_max_duration: 15.0 # 语义段目标最长时长。
+  hard_max_duration: 20.0   # 语义段硬上限，超过会强制切分。
+
+# 运行模式覆盖：命令行 --mode 会把这里的值覆盖到默认配置上。
+modes:
+  conservative: # 保守模式：少剪停顿，少做语义删除。
+    pause_cut:
+      pause_threshold: 0.45        # 停顿更长才剪，节奏更自然但不够紧。
+      target_pause_duration: 0.20  # 每个停顿保留更久。
+      sentence_boundary_pause_bonus: 0.28 # 句末停顿保护更强。
+    dedup:
+      similarity_threshold: 0.90   # 重复判断更保守。
+  standard: # 标准模式：使用主配置，不额外覆盖。
+    pause_cut: {}
+    dedup: {}
+  aggressive: # 激进模式：剪得更紧，重复判断更宽松。
+    pause_cut:
+      pause_threshold: 0.16        # 更短停顿也会被压缩。
+      target_pause_duration: 0.07  # 压缩后保留更短。
+      sentence_boundary_pause_bonus: 0.18 # 句末停顿保护降低。
+    dedup:
+      similarity_threshold: 0.78   # 重复判断更激进。
+
+# 主字幕样式：普通对白字幕，不包括右上角/底部固定叠字。
+subtitle:
+  play_res_x: 1080                 # ASS 画布宽度；竖屏 1080。
+  play_res_y: 1920                 # ASS 画布高度；竖屏 1920。
+  font_name: "Source Han Sans SC"  # 字体名称；机器上必须安装，否则 FFmpeg 会 fallback。
+  font_size: 76                    # 主字幕字号；越大越醒目，也更容易换行。
+  primary_color: "&H00FFFFFF"      # 主字幕颜色，当前为白色。
+  outline_color: "&H00000000"      # 描边颜色，当前为黑色。
+  outline_width: 4                 # 描边粗细；越大越抗复杂背景，但字会更厚。
+  shadow_depth: 1                  # 阴影深度；0 关闭阴影。
+  alignment: 2                     # ASS 对齐方式；2=底部居中。
+  margin_v: 320                    # 距底部距离；越大字幕越往上，避免压住底部提示。
+  margin_l: 30                     # 左边距。
+  margin_r: 30                     # 右边距。
+  max_chars_per_line: 18           # 每行最多字符数；越小越容易换行。
+  max_lines: 2                     # 最多字幕行数；超过会截断/压缩展示。
+
+# 封面和视频内固定叠字配置。
+visual_overlay:
+  enabled: true                 # 是否启用封面/固定叠字包装。
+  generate_cover: true          # 是否生成 cover.png。
+  insert_cover_seconds: 0.0     # 是否把封面作为片头插入；0=只生成封面图，不插入视频。
+  cover_frame_time: 0.5         # 截取视频第几秒作为封面底图。
+  default_cover_title: "今日看盘\n重点提醒" # 未传 cover_title 时的默认封面大标题；\n 表示换行。
+  default_cover_subtitle: "看盘笔记"       # 封面左下角小标题。
+  default_top_right_suffix: "收评"         # 自动生成右上角标签时的后缀，如 0327 收评。
+  person_intro: "九方智投 投顾（谈军 登记编号：A0740625030028）" # 底部人物介绍默认文案。
+  disclaimer_lines: # 底部固定提醒，最多显示前三行。
+    - "历史数据/观点仅供参考 不构成投资建议"
+    - "不作为未来收益保证 据此操作风险自担"
+    - "投资有风险 入市需谨慎"
+  colors:
+    yellow: "&H0000F6FF"     # 黄色叠字颜色，用于封面标题/右上角；ASS 为 BGR 顺序。
+    white: "&H00FFFFFF"      # 白色叠字颜色，用于底部说明。
+    black: "&H00000000"      # 黑色描边。
+    soft_black: "&H7A000000" # 半透明黑背景/阴影色。
+  layout:
+    cover_title_font_size: 156          # 封面大标题初始字号。
+    cover_title_min_font_size: 104      # 封面标题最小字号，放不下会逐步缩小。
+    cover_title_max_chars_per_line: 7   # 封面标题每行最大字符数。
+    cover_title_max_lines: 2            # 封面标题最多行数。
+    cover_title_box_width: 900          # 封面标题可用宽度；越小越容易缩小/换行。
+    cover_title_y: 285                  # 封面标题 y 坐标；越大越靠下。
+    cover_date_font_size: 68            # 封面日期和小标题初始字号。
+    cover_date_min_font_size: 48        # 封面日期和小标题最小字号。
+    cover_date_box_width: 520           # 封面日期/小标题可用宽度。
+    cover_date_x: 120                   # 封面日期左上角 x 坐标。
+    cover_date_y: 1460                  # 封面日期 y 坐标。
+    cover_subtitle_y: 1545              # 封面小标题 y 坐标。
+    top_right_font_size: 56             # 视频内右上角标签初始字号。
+    top_right_min_font_size: 36         # 右上角标签最小字号。
+    top_right_box_width: 460            # 右上角标签可用宽度。
+    top_right_x: 1010                   # 右上角标签 x 坐标；配合 an9，表示右上锚点。
+    top_right_y: 92                     # 右上角标签 y 坐标。
+    bottom_intro_font_size: 34          # 底部人物介绍初始字号。
+    bottom_intro_min_font_size: 26      # 底部人物介绍最小字号。
+    bottom_intro_box_width: 940         # 底部人物介绍可用宽度。
+    bottom_intro_max_lines: 1           # 人物介绍最多行数；1 表示尽量单行显示。
+    bottom_intro_y: 1715                # 人物介绍 y 坐标；越大越靠近底部。
+    bottom_disclaimer_font_size: 32     # 底部风险提醒初始字号。
+    bottom_disclaimer_min_font_size: 24 # 底部风险提醒最小字号。
+    bottom_disclaimer_box_width: 960    # 底部风险提醒可用宽度。
+    bottom_disclaimer_max_lines: 1      # 每条提醒最多行数。
+    bottom_disclaimer_first_y: 1780     # 第一条提醒 y 坐标。
+    bottom_disclaimer_line_gap: 43      # 三条提醒之间的垂直间距。
+
+# 渲染配置：控制 FFmpeg 剪辑、拼接、烧字幕的方式和画质。
+render:
+  strategy: "filter_complex"      # filter_complex=一次 FFmpeg 完成剪切拼接烧字；通常更快。
+  max_filter_complex_segments: 80 # keep range 数量超过该值时回退到分段文件渲染，避免滤镜过长。
+  min_keep_gap_between_deletes: 0.05 # 相邻删除区间中间保留碎片短于该值时吞掉，避免爆破音/短尾音。
+  video_codec: "libx264"         # 视频编码器；libx264 兼容性好。
+  audio_codec: "aac"             # 音频编码器。
+  video_profile: "high"          # H.264 profile；high 画质/兼容性平衡较好。
+  video_level: "4.1"             # H.264 level；影响设备兼容性。
+  crf: 16                        # 最终视频质量；越小画质越高、文件越大，常用 16-23。
+  preset: "medium"               # 编码速度/压缩率；越慢文件更小但耗时更长。
+  intermediate_crf: 12           # 分段渲染中间文件质量；越小越高，避免二次编码损失。
+  intermediate_preset: "veryfast" # 中间文件编码速度；通常用快一点节省时间。
+  pixel_format: "yuv420p"        # 像素格式；yuv420p 兼容大多数播放器/平台。
+  movflags: "+faststart"         # 让 mp4 元数据前置，利于在线播放/上传预览。
+
+# 阿里云 ASR/LLM 配置：用于云端 ASR fallback 和所有 LLM 判断。
+aliyun:
+  asr:
+    model: "qwen3-asr-flash"       # 阿里云实时/兼容接口 ASR 模型。
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1" # 兼容 OpenAI 风格接口地址。
+    enable_word_timestamps: false  # 阿里云 ASR 是否请求词级时间戳；当前主流程依赖 FunASR provider 时间戳。
+    filetrans_model: "qwen3-asr-flash-filetrans" # 长音频文件转写模型。
+    filetrans_api_url: "https://dashscope.aliyuncs.com/api/v1" # 文件转写 API 地址。
+    filetrans_file_url: ""         # 已上传文件 URL；为空时可走本地上传逻辑。
+    filetrans_auto_upload: false   # 是否自动上传本地音频到文件转写服务。
+    filetrans_poll_interval: 5     # 文件转写轮询间隔；越小反馈更快但请求更多。
+    filetrans_poll_timeout: 900    # 文件转写最大等待时间。
+    sample_rate: 16000             # 上传给 ASR 的采样率。
+    format: "wav"                  # 上传音频格式。
+    enable_punctuation: true       # 云端 ASR 是否启用标点。
+    enable_timestamp: true         # 云端 ASR 是否启用时间戳。
+  llm:
+    model: "qwen-plus"             # LLM 模型名，用于语义删除、连贯性复核、字幕纠错。
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1" # LLM 接口地址。
+    temperature: 0.1               # 采样温度；越低越稳定，适合剪辑决策。
+    max_tokens: 2048               # 单次 LLM 最大输出 token。
+    timeout_seconds: 180           # 单次 LLM 请求超时时间；网络慢或输入长时可调大。

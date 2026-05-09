@@ -1,0 +1,8 @@
+interface:
+  display_name: "Video Rough Cut"
+  short_description: "Rough-cut Chinese spoken videos with subtitles and finance-style cover overlays."
+  brand_color: "#FACC15"
+  default_prompt: "Use $video-rough-cut to edit a local Chinese talking-head video with subtitles, cover art, and fixed bottom reminders."
+
+policy:
+  allow_implicit_invocation: true

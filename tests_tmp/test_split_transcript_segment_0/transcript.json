@@ -1,0 +1,153 @@
+{
+  "language": "zh",
+  "segments": [
+    {
+      "id": "seg-030_part1",
+      "start": 82.67,
+      "end": 85.575,
+      "text": "创新药国产创新药出口",
+      "words": [
+        {
+          "word": "创",
+          "start": 82.67,
+          "end": 82.91,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "新",
+          "start": 82.97,
+          "end": 83.15,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "药",
+          "start": 83.15,
+          "end": 83.39,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "国",
+          "start": 83.89,
+          "end": 84.13,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "产",
+          "start": 84.17,
+          "end": 84.37,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "创",
+          "start": 84.37,
+          "end": 84.53,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "新",
+          "start": 84.53,
+          "end": 84.71,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "药",
+          "start": 84.71,
+          "end": 84.95,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "出",
+          "start": 84.95,
+          "end": 85.19,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "口",
+          "start": 85.19,
+          "end": 85.575,
+          "timestamp_source": "provider"
+        }
+      ]
+    },
+    {
+      "id": "seg-030_part2",
+      "start": 86.48,
+      "end": 88.82,
+      "text": "国产创新奥出海迎增长态势",
+      "words": [
+        {
+          "word": "国",
+          "start": 86.48,
+          "end": 86.68,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "产",
+          "start": 86.68,
+          "end": 86.88,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "创",
+          "start": 86.88,
+          "end": 87.04,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "新",
+          "start": 87.04,
+          "end": 87.2,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "奥",
+          "start": 87.2,
+          "end": 87.38,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "出",
+          "start": 87.38,
+          "end": 87.56,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "海",
+          "start": 87.56,
+          "end": 87.8,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "迎",
+          "start": 87.86,
+          "end": 88.1,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "增",
+          "start": 88.12,
+          "end": 88.28,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "长",
+          "start": 88.28,
+          "end": 88.48,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "态",
+          "start": 88.48,
+          "end": 88.58,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "势",
+          "start": 88.58,
+          "end": 88.82,
+          "timestamp_source": "provider"
+        }
+      ]
+    }
+  ]
+}

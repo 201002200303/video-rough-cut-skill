@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Environment variables (never commit real keys)
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project runtime artifacts
+output/
+jobs/
+*.db
+*.sqlite3
+
+# Media files (do not commit large video/audio files)
+*.mp4
+*.mov
+*.wav
+*.mp3
+*.aac
+*.flac
+*.avi
+
+# Logs
+*.log
+logs/

@@ -1,0 +1,17 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+Style: CoverTitle,Microsoft YaHei UI,156,&H0000F6FF,&H0000F6FF,&H00000000,&H7A000000,1,0,0,0,100,100,0,0,1,8,3,8,20,20,20,1
+Style: CoverDate,Microsoft YaHei UI,68,&H0000F6FF,&H0000F6FF,&H00000000,&H7A000000,1,0,0,0,100,100,0,0,1,5,2,7,20,20,20,1
+
+[Events]
+Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+Dialogue: 10,0:00:00.00,0:00:10.00,CoverTitle,,0,0,0,,{\an8\fs104\pos(540,285)}今天是不是重要反\N转信号？
+Dialogue: 10,0:00:00.00,0:00:10.00,CoverDate,,0,0,0,,{\an7\fs68\pos(120,1460)}2026.3.27
+Dialogue: 10,0:00:00.00,0:00:10.00,CoverDate,,0,0,0,,{\an7\fs68\pos(120,1545)}看盘笔记

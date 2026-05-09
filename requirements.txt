@@ -1,0 +1,24 @@
+# PyTorch CPU wheel 源。
+# 必须保留，否则 torch==2.2.2+cpu 和 torchaudio==2.2.2+cpu 可能无法解析。
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# Python 版本约束：torch 2.2.2+cpu 不支持 Python 3.13，需要 <=3.12。
+# numpy<2 与 torch 2.2.2 兼容。
+numpy<2
+torch==2.2.2+cpu
+torchaudio==2.2.2+cpu
+
+# 数据校验和配置。
+pydantic>=2.6.0
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# 外部 provider 客户端。
+requests>=2.31.0
+dashscope>=1.23.0
+
+# 本地 ASR，提供真实时间戳。
+funasr>=1.2.0
+
+# 测试。
+pytest>=8.0.0

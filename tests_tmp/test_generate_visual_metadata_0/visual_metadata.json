@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "generate_cover": true,
+  "cover_title": "今天是\n反转信号？",
+  "date_label": "2026.3.27",
+  "cover_subtitle": "看盘笔记",
+  "top_right_label": "0327 收评",
+  "person_intro": "九方智投 投顾（谈军 登记编号：A0740625030028）",
+  "disclaimer_lines": [
+    "历史数据/观点仅供参考 不构成投资建议",
+    "不作为未来收益保证 据此操作风险自担",
+    "投资有风险 入市需谨慎"
+  ],
+  "insert_cover_seconds": 1.0,
+  "cover_frame_time": 0.5
+}

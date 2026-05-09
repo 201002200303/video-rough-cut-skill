@@ -1,0 +1,45 @@
+{
+  "language": "zh",
+  "segments": [
+    {
+      "id": "s1_part1",
+      "start": 0.0,
+      "end": 1.0,
+      "text": "ab",
+      "words": [
+        {
+          "word": "a",
+          "start": 0.0,
+          "end": 0.5,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "b",
+          "start": 0.5,
+          "end": 1.0,
+          "timestamp_source": "provider"
+        }
+      ]
+    },
+    {
+      "id": "s1_part2",
+      "start": 1.2000000000000002,
+      "end": 2.2,
+      "text": "ef",
+      "words": [
+        {
+          "word": "e",
+          "start": 1.2000000000000002,
+          "end": 1.7000000000000002,
+          "timestamp_source": "provider"
+        },
+        {
+          "word": "f",
+          "start": 1.7000000000000002,
+          "end": 2.2,
+          "timestamp_source": "provider"
+        }
+      ]
+    }
+  ]
+}
