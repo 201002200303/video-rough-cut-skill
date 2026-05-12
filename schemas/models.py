@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -204,3 +206,215 @@ class VisualMetadata(BaseModel):
         if value < 0:
             raise ValueError("visual timing values must be >= 0")
         return value
+
+
+# ═══════════════════════════════════════════════════════════════════
+# V2.5 模型 — 不可变事实层 + 结构化补丁
+# ═══════════════════════════════════════════════════════════════════
+
+
+class SourceWord(BaseModel):
+    """Immutable word-level timestamp from ASR. Never overwritten after creation."""
+
+    word_id: str = Field(..., description="Globally unique word identifier, e.g. w-0001")
+    char: str = Field(..., description="ASR original character or minimal word unit")
+    start: float = Field(..., description="Start time in seconds")
+    end: float = Field(..., description="End time in seconds")
+    confidence: float | None = Field(default=None, description="ASR confidence 0.0-1.0")
+    segment_id: str = Field(..., description="Source segment id this word belongs to")
+    timestamp_source: str = Field(default="provider", description="provider or estimated")
+    provider: str = Field(default="funasr", description="ASR provider name")
+
+    @field_validator("start")
+    @classmethod
+    def start_non_negative(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("start must be >= 0")
+        return value
+
+    @field_validator("end")
+    @classmethod
+    def end_after_start(cls, value: float, info) -> float:
+        if info.data.get("start") is not None and value <= info.data["start"]:
+            raise ValueError("end must be > start")
+        return value
+
+    @field_validator("timestamp_source")
+    @classmethod
+    def valid_timestamp_source(cls, value: str) -> str:
+        if value not in ("provider", "estimated"):
+            raise ValueError("timestamp_source must be 'provider' or 'estimated'")
+        return value
+
+
+class SourceSegment(BaseModel):
+    """Immutable segment built from source words. Used for window construction."""
+
+    segment_id: str = Field(..., description="Segment identifier")
+    word_ids: list[str] = Field(default_factory=list, description="Source word IDs in this segment")
+    text: str = Field(..., description="Concatenated source word chars")
+    start: float = Field(..., description="Start time in seconds")
+    end: float = Field(..., description="End time in seconds")
+    split_reason: str = Field(default="pause_gap", description="Why this segment was split")
+
+    @field_validator("start")
+    @classmethod
+    def start_non_negative(cls, value: float) -> float:
+        if value < 0:
+            raise ValueError("start must be >= 0")
+        return value
+
+    @field_validator("end")
+    @classmethod
+    def end_after_start(cls, value: float, info) -> float:
+        if info.data.get("start") is not None and value <= info.data["start"]:
+            raise ValueError("end must be > start")
+        return value
+
+
+class DisplayPatch(BaseModel):
+    """Subtitle-only text correction. Never affects video timeline."""
+
+    patch_id: str = Field(..., description="Unique patch identifier")
+    type: Literal["replace_display", "replace_display_span", "insert_display", "delete_display_noise"] = Field(
+        ..., description="Patch type"
+    )
+    word_ids: list[str] = Field(default_factory=list, description="Affected source word IDs")
+    after_word_id: str | None = Field(default=None, description="Insertion point for insert_display")
+    from_text: str = Field(default="", description="Original text that matches source words")
+    to_text: str = Field(default="", description="Replacement display text")
+    confidence: float = Field(..., description="Confidence 0.0-1.0")
+    evidence: dict = Field(default_factory=dict, description="Evidence for this correction")
+    affects_timeline: bool = Field(default=False, description="Always False for display patches")
+
+    @field_validator("confidence")
+    @classmethod
+    def confidence_range(cls, value: float) -> float:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("confidence must be between 0.0 and 1.0")
+        return value
+
+
+class DeletionCandidate(BaseModel):
+    """Timeline deletion proposal. Must bind to real source word IDs."""
+
+    candidate_id: str = Field(..., description="Unique candidate identifier")
+    window_id: str = Field(..., description="Parent window ID")
+    type: Literal[
+        "fast_repetition", "false_start", "redundant_restatement", "incomplete_fragment", "filler_phrase"
+    ] = Field(..., description="Deletion type")
+    word_ids: list[str] = Field(..., description="Source word IDs to delete")
+    delete_text_original: str = Field(..., description="Original text being deleted")
+    delete_text_corrected_view: str = Field(default="", description="Corrected-view text being deleted")
+    before_text_corrected_view: str = Field(default="", description="Text before deletion in corrected view")
+    after_text_corrected_view: str = Field(default="", description="Text after deletion in corrected view")
+    reason: str = Field(..., description="Human-readable reason")
+    confidence: float = Field(..., description="Confidence 0.0-1.0")
+
+    @field_validator("confidence")
+    @classmethod
+    def confidence_range(cls, value: float) -> float:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("confidence must be between 0.0 and 1.0")
+        return value
+
+
+class GlobalContext(BaseModel):
+    """Output of global semantic analysis phase."""
+
+    topic: str = Field(default="", description="Video topic")
+    speaker_aliases: list[str] = Field(default_factory=list, description="Speaker name variants")
+    confirmed_terms: list[str] = Field(default_factory=list, description="User-confirmed proper nouns")
+    domain_terms: list[str] = Field(default_factory=list, description="Domain-specific terminology")
+    possible_misrecognitions: list[dict] = Field(
+        default_factory=list, description="Likely ASR misrecognitions with evidence"
+    )
+    uncertain_items: list[dict] = Field(default_factory=list, description="Items needing user confirmation")
+
+
+class SegmentIssue(BaseModel):
+    """Per-segment issue flag from screening phase."""
+
+    segment_id: str = Field(..., description="Segment identifier")
+    issue_types: list[str] = Field(
+        default_factory=list,
+        description="Issue categories: asr_homophone_error, speaker_name_error, domain_term_error, "
+        "missing_char, extra_noise_char, fast_repetition, false_start, semantic_restatement, "
+        "filler_heavy, uncertain",
+    )
+    priority: Literal["high", "medium", "low"] = Field(default="medium", description="Issue priority")
+    evidence: str = Field(default="", description="Evidence description for LLM screening")
+
+
+class Window(BaseModel):
+    """Five-segment analysis window for LLM correction and dedup phases."""
+
+    window_id: str = Field(..., description="Window identifier")
+    target_segment_ids: list[str] = Field(..., description="Segments that may be edited")
+    left_context_segment_ids: list[str] = Field(default_factory=list, description="Read-only left context")
+    right_context_segment_ids: list[str] = Field(default_factory=list, description="Read-only right context")
+    allowed_edit_segment_ids: list[str] = Field(default_factory=list, description="Segments where edits are permitted")
+
+    @property
+    def all_segment_ids(self) -> list[str]:
+        return self.left_context_segment_ids + self.target_segment_ids + self.right_context_segment_ids
+
+
+class CorrectionCandidate(BaseModel):
+    """Raw LLM output from window correction phase, before validation."""
+
+    window_id: str = Field(..., description="Parent window ID")
+    type: Literal["replace_display", "replace_display_span", "insert_display", "delete_display_noise"] = Field(
+        ..., description="Correction type"
+    )
+    word_ids: list[str] = Field(default_factory=list, description="Affected source word IDs")
+    after_word_id: str | None = Field(default=None, description="Insertion point for insert_display")
+    from_text: str = Field(default="", description="Original text")
+    to_text: str = Field(default="", description="Correction text")
+    confidence: float = Field(..., description="LLM confidence 0.0-1.0")
+    evidence: dict = Field(default_factory=dict, description="LLM-provided evidence")
+
+    @field_validator("confidence")
+    @classmethod
+    def confidence_range(cls, value: float) -> float:
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("confidence must be between 0.0 and 1.0")
+        return value
+
+
+class CorrectedView(BaseModel):
+    """Temporary per-window corrected text view. Used only by dedup LLM, never persisted."""
+
+    window_id: str = Field(..., description="Parent window ID")
+    source_text: str = Field(..., description="Original concatenated text")
+    corrected_text: str = Field(..., description="Text after applying validated display patches")
+    applied_patch_ids: list[str] = Field(default_factory=list, description="Patches applied to create this view")
+    word_id_mapping: dict[str, list[str]] = Field(
+        default_factory=dict, description="Mapping: original_word_id -> [contributing display word ids]"
+    )
+
+
+class ValidatedPatchFile(BaseModel):
+    """Output of the correction validation phase."""
+
+    accepted: list[DisplayPatch] = Field(default_factory=list, description="Validated display patches")
+    rejected: list[dict] = Field(default_factory=list, description="Rejected patches with failure reasons")
+
+
+class ValidatedDeletionFile(BaseModel):
+    """Output of the deletion validation phase."""
+
+    accepted: list[DeletionCandidate] = Field(default_factory=list, description="Validated deletion candidates")
+    rejected: list[dict] = Field(default_factory=list, description="Rejected candidates with failure reasons")
+
+
+class SegmentIssueFile(BaseModel):
+    """Output of the segment issue screening phase."""
+
+    issues: list[SegmentIssue] = Field(default_factory=list, description="Flagged segment issues")
+
+
+class WindowFile(BaseModel):
+    """Output of the window building phase."""
+
+    windows: list[Window] = Field(default_factory=list, description="Built analysis windows")

@@ -248,3 +248,40 @@ aliyun:
     temperature: 0.1               # 采样温度；越低越稳定，适合剪辑决策。
     max_tokens: 2048               # 单次 LLM 最大输出 token。
     timeout_seconds: 180           # 单次 LLM 请求超时时间；网络慢或输入长时可调大。
+
+# ─────────────────────────────────────────────────────────
+# V2.5 新增配置 — Semantic Window Patch Pipeline
+# ─────────────────────────────────────────────────────────
+
+# 全局语义分析：提取话题、说话人、领域词、高频错词。
+global_context:
+  enabled: true                    # 是否启用全局语义分析。
+  max_uncertainty_questions: 3     # 每次最多向用户确认多少个不确定项。
+
+# Segment 问题粗筛：LLM 快速扫描哪些 segment 需要进入窗口精修。
+screening:
+  enabled: true                    # 是否启用问题粗筛。
+  min_priority: "medium"           # 最低进入窗口的优先级；high/medium/low。
+
+# 五段窗口构建：把 flagged segment 扩展成带上下文的编辑窗口。
+window:
+  left_context_segments: 2         # target 左侧带多少个只读 segment。
+  right_context_segments: 2        # target 右侧带多少个只读 segment。
+  merge_adjacent_flagged: true     # 相邻 flagged segment 是否合并成一个 target group。
+
+# 窗口内 ASR 纠错：只改字幕展示，不改时间轴。
+correction:
+  enabled: true                    # 是否启用窗口纠错。
+  min_confidence: 0.86             # 纠错候选最低置信度。
+  allow_insert_display: true       # 是否允许 insert_display（补字只影响字幕）。
+  max_segment_chars: 300           # 单次纠错传入 LLM 的最大字符数。
+
+# 硬校验参数：代码校验所有 LLM 输出，替代 LLM review。
+validation:
+  correction_min_confidence: 0.86  # 纠错 patch 最低置信度。
+  deletion_min_confidence: 0.88    # 删除候选最低置信度。
+  max_window_delete_ratio: 0.15    # 单个窗口内累计删除比例上限。
+  max_total_delete_ratio: 0.22     # 整条视频累计删除比例上限。
+  max_single_delete_duration: 3.0  # 单段删除最长时长（秒）。
+  min_padding_before: 0.06         # 删除范围前向保留边（秒）。
+  min_padding_after: 0.08          # 删除范围后向保留边（秒）。

@@ -1,10 +1,10 @@
-"""将停顿编辑和语义去重编辑合并为最终决策。"""
+"""将停顿编辑和语义去重编辑合并为最终决策。V2 + V2.5 兼容。"""
 
 import json
 from pathlib import Path
 
 from core.utils import setup_logger
-from schemas.models import EditDecision, EditDecisionFile
+from schemas.models import DeletionCandidate, EditDecision, EditDecisionFile, SourceWord
 
 logger = setup_logger(__name__)
 
@@ -15,7 +15,7 @@ def plan_edits(
     review_needed: list[dict],
     output_path: Path,
 ) -> EditDecisionFile:
-    """按优先级和重叠规则合并编辑决策。"""
+    """按优先级和重叠规则合并编辑决策 (V2 path)。"""
     merged_deletes = _merge_delete_edits([e for e in semantic_edits if e.type == "delete"])
     pause_only = []
     for pe in pause_edits:
@@ -26,6 +26,56 @@ def plan_edits(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(out.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
     logger.info("Planned edits saved: %s (count=%d)", output_path, len(edits))
+    return out
+
+
+def plan_edits_v25(
+    pause_edits: list[EditDecision],
+    deletion_candidates: list[DeletionCandidate],
+    source_words: list[SourceWord],
+    output_path: Path,
+    validation_cfg: dict | None = None,
+) -> EditDecisionFile:
+    """V2.5: 将 DeletionCandidate + pause edits 合并为 EditDecisionFile。
+
+    deletion_candidates 已通过硬校验，直接转换为 EditDecision。
+    """
+    words_by_id = {w.word_id: w for w in source_words}
+
+    # 将 DeletionCandidate 转为 EditDecision
+    del_edits: list[EditDecision] = []
+    for dc in deletion_candidates:
+        try:
+            start = min(words_by_id[w].start for w in dc.word_ids if w in words_by_id)
+            end = max(words_by_id[w].end for w in dc.word_ids if w in words_by_id)
+            padding_before = 0.06
+            padding_after = 0.08
+            if validation_cfg:
+                padding_before = float(validation_cfg.get("min_padding_before", 0.06))
+                padding_after = float(validation_cfg.get("min_padding_after", 0.08))
+            del_edits.append(
+                EditDecision(
+                    type="delete",
+                    start=max(0.0, start - padding_before),
+                    end=end + padding_after,
+                    reason=dc.reason,
+                    source="window_dedup",
+                    confidence=dc.confidence,
+                )
+            )
+        except (KeyError, ValueError):
+            logger.warning("Could not resolve times for deletion candidate %s", dc.candidate_id)
+
+    merged_deletes = _merge_delete_edits(del_edits)
+    pause_only = []
+    for pe in pause_edits:
+        pause_only.extend(_subtract_deletes_from_pause(pe, merged_deletes))
+    merged_pauses = _merge_pause_edits(pause_only)
+    edits = sorted([*merged_deletes, *merged_pauses], key=lambda x: x.start)
+    out = EditDecisionFile(edits=edits, review_needed=[])
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(out.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info("V2.5 Planned edits: %d deletes, %d pauses", len(merged_deletes), len(merged_pauses))
     return out
 
 

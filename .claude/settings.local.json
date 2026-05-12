@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/test_v25_models.py tests/test_correction_validator.py tests/test_deletion_validator.py tests/test_boundary_validator.py tests/test_build_windows.py -v)",
+      "Bash(python -m py_compile scripts/run.py)",
+      "Bash(python -m py_compile scripts/generate_report.py)",
+      "Bash(python -m pytest tests/test_v25_models.py tests/test_correction_validator.py tests/test_deletion_validator.py tests/test_boundary_validator.py tests/test_build_windows.py tests/test_schemas.py -v)",
+      "Bash(./.venv/Scripts/python.exe -c ' *)"
+    ]
+  }
+}

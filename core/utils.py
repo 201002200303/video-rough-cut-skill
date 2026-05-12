@@ -155,6 +155,15 @@ def job_output_paths(output_dir: str) -> dict[str, Path]:
         "cover_image": directory / "cover.png",
         "edited_video": directory / "edited_video_with_yellow_subtitles.mp4",
         "report": directory / "edit_report.md",
+        # V2.5 artifacts
+        "source_words": directory / "source_words.json",
+        "source_segments": directory / "source_segments.json",
+        "global_context": directory / "global_context.json",
+        "segment_issues": directory / "segment_issues.json",
+        "windows": directory / "windows.json",
+        "display_patches": directory / "display_patches.json",
+        "deletion_candidates": directory / "deletion_candidates.json",
+        "remapped_words": directory / "remapped_words.json",
     }
 
 
@@ -175,4 +184,13 @@ ARTIFACT_NAMES = {
     "cover_image": "cover.png",
     "edited_video": "edited_video_with_yellow_subtitles.mp4",
     "report": "edit_report.md",
+    # V2.5 artifacts
+    "source_words": "source_words.json",
+    "source_segments": "source_segments.json",
+    "global_context": "global_context.json",
+    "segment_issues": "segment_issues.json",
+    "windows": "windows.json",
+    "display_patches": "display_patches.json",
+    "deletion_candidates": "deletion_candidates.json",
+    "remapped_words": "remapped_words.json",
 }

@@ -1,10 +1,12 @@
-"""从重映射转写数据生成 ASS 字幕文件。"""
+"""从重映射转写数据生成 ASS 字幕文件。V2 + V2.5 兼容。"""
+
+from __future__ import annotations
 
 from pathlib import Path
 
 from core.utils import load_config
 from core.utils import setup_logger
-from schemas.models import Transcript
+from schemas.models import DisplayPatch, Transcript
 
 logger = setup_logger(__name__)
 
@@ -12,8 +14,12 @@ logger = setup_logger(__name__)
 def generate_subtitles(
     remapped_transcript: Transcript,
     output_path: Path,
+    display_patches: list[DisplayPatch] | None = None,
 ) -> Path:
-    """生成 ASS 字幕；所有视觉参数来自 config.default.yaml [subtitle]。"""
+    """生成 ASS 字幕；所有视觉参数来自 config.default.yaml [subtitle]。
+
+    V2.5: 可选 display_patches 用于纠错字幕文本，不影响时间轴。
+    """
     cfg = load_config().get("subtitle", {})
     font_name: str = cfg.get("font_name", "Microsoft YaHei")
     font_size: int = int(cfg.get("font_size", 32))
@@ -29,6 +35,11 @@ def generate_subtitles(
     max_lines: int = int(cfg.get("max_lines", 2))
     play_res_x: int = int(cfg.get("play_res_x", 1920))
     play_res_y: int = int(cfg.get("play_res_y", 1080))
+
+    # V2.5: 预计算 display patch 文本映射
+    _patch_text_cache: dict[str, str] | None = None
+    if display_patches:
+        _patch_text_cache = _build_patch_text_map(display_patches, remapped_transcript)
 
     header = f"""[Script Info]
 ScriptType: v4.00+
@@ -46,7 +57,11 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 """
     lines = [header]
     for seg in remapped_transcript.segments:
-        text = _wrap_zh(seg.text, max_chars_per_line, max_lines)
+        text = seg.text
+        # V2.5: 应用 display patches
+        if _patch_text_cache and seg.id in _patch_text_cache:
+            text = _patch_text_cache[seg.id]
+        text = _wrap_zh(text, max_chars_per_line, max_lines)
         lines.append(
             f"Dialogue: 0,{_ass_time(seg.start)},{_ass_time(seg.end)},Default,,0,0,0,,{text}"
         )
@@ -54,6 +69,37 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
     output_path.write_text("\n".join(lines), encoding="utf-8")
     logger.info("Subtitles generated: %s", output_path)
     return output_path
+
+
+def _build_patch_text_map(
+    patches: list[DisplayPatch],
+    transcript: Transcript,
+) -> dict[str, str]:
+    """构建 segment_id -> patched text 映射。"""
+    result: dict[str, str] = {}
+    for seg in transcript.segments:
+        text = seg.text
+        seg_patches = [p for p in patches if any(
+            wid.startswith(f"w-") and True for wid in p.word_ids
+        )]
+        if not seg_patches:
+            result[seg.id] = text
+            continue
+        for patch in seg_patches:
+            if patch.type == "replace_display":
+                if patch.from_text and patch.from_text in text:
+                    text = text.replace(patch.from_text, patch.to_text, 1)
+            elif patch.type == "replace_display_span":
+                if patch.from_text and patch.from_text in text:
+                    text = text.replace(patch.from_text, patch.to_text, 1)
+            elif patch.type == "delete_display_noise":
+                if patch.from_text:
+                    text = text.replace(patch.from_text, "", 1)
+            elif patch.type == "insert_display":
+                # Insert after a word — simple heuristic: prepend to text
+                pass
+        result[seg.id] = text
+    return result
 
 
 def _ass_time(seconds: float) -> str:
