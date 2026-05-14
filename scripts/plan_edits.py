@@ -1,4 +1,4 @@
-"""将停顿编辑和语义去重编辑合并为最终决策。V2 + V2.5 兼容。"""
+"""将停顿编辑和语义去重编辑合并为最终决策。"""
 
 import json
 from pathlib import Path
@@ -11,38 +11,17 @@ logger = setup_logger(__name__)
 
 def plan_edits(
     pause_edits: list[EditDecision],
-    semantic_edits: list[EditDecision],
-    review_needed: list[dict],
-    output_path: Path,
-) -> EditDecisionFile:
-    """按优先级和重叠规则合并编辑决策 (V2 path)。"""
-    merged_deletes = _merge_delete_edits([e for e in semantic_edits if e.type == "delete"])
-    pause_only = []
-    for pe in pause_edits:
-        pause_only.extend(_subtract_deletes_from_pause(pe, merged_deletes))
-    merged_pauses = _merge_pause_edits(pause_only)
-    edits = sorted([*merged_deletes, *merged_pauses], key=lambda x: x.start)
-    out = EditDecisionFile(edits=edits, review_needed=review_needed)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(out.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
-    logger.info("Planned edits saved: %s (count=%d)", output_path, len(edits))
-    return out
-
-
-def plan_edits_v25(
-    pause_edits: list[EditDecision],
     deletion_candidates: list[DeletionCandidate],
     source_words: list[SourceWord],
     output_path: Path,
     validation_cfg: dict | None = None,
 ) -> EditDecisionFile:
-    """V2.5: 将 DeletionCandidate + pause edits 合并为 EditDecisionFile。
+    """将 DeletionCandidate + pause edits 合并为 EditDecisionFile。
 
     deletion_candidates 已通过硬校验，直接转换为 EditDecision。
     """
     words_by_id = {w.word_id: w for w in source_words}
 
-    # 将 DeletionCandidate 转为 EditDecision
     del_edits: list[EditDecision] = []
     for dc in deletion_candidates:
         try:
@@ -75,7 +54,7 @@ def plan_edits_v25(
     out = EditDecisionFile(edits=edits, review_needed=[])
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(out.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8")
-    logger.info("V2.5 Planned edits: %d deletes, %d pauses", len(merged_deletes), len(merged_pauses))
+    logger.info("Planned edits: %d deletes, %d pauses", len(merged_deletes), len(merged_pauses))
     return out
 
 

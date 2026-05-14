@@ -7,8 +7,8 @@ from pathlib import Path
 
 from core.utils import load_config, setup_logger, ProviderError
 from providers.aliyun_qwen import AliyunQwenProvider
+from phases.build_windows import get_window_segments, get_window_words
 from schemas.models import (
-    CorrectedView,
     DeletionCandidate,
     GlobalContext,
     SourceSegment,
@@ -25,20 +25,21 @@ def dedup_window(
     window: Window,
     window_segments: list[SourceSegment],
     window_words: list[SourceWord],
-    corrected_view: CorrectedView,
     global_context: GlobalContext,
     dedup_prompt_path: Path,
     total_duration: float = 0.0,
 ) -> ValidatedDeletionFile:
     """对一个 window 执行 LLM 去重检测 + 硬校验。
 
-    LLM 基于 corrected_view 理解语义，但删除候选必须绑定原始 source word_id。
+    LLM 直接看原始 source text（不经纠错），删除候选必须绑定原始 source word_id。
+    global_context.canonical_terms 帮助 LLM 理解全文不一致的 ASR 错字。
     """
     cfg = load_config().get("dedup", {})
     min_confidence = float(cfg.get("min_confidence", 0.88))
 
     template = dedup_prompt_path.read_text(encoding="utf-8")
-    prompt = _build_dedup_prompt(window, window_segments, window_words, corrected_view, global_context, template)
+    source_text = "".join(w.char for w in window_words)
+    prompt = _build_dedup_prompt(window, window_segments, window_words, source_text, global_context, template)
 
     provider = AliyunQwenProvider()
 
@@ -57,36 +58,45 @@ def dedup_all_windows(
     windows: list[Window],
     source_segments: list[SourceSegment],
     source_words: list[SourceWord],
-    corrected_views: dict[str, CorrectedView],
     global_context: GlobalContext,
     dedup_prompt_path: Path,
     output_path: Path | None = None,
 ) -> list[DeletionCandidate]:
-    """对所有 window 执行去重，汇总所有 approved candidates。
+    """对所有去重窗口执行去重，汇总所有 approved candidates。
+
+    Args:
+        windows: 去重窗口列表（phase="dedup"）。
+        source_segments: 所有 source segments。
+        source_words: 所有 source words。
+        global_context: 全局语境（含 canonical_terms 供 LLM 理解不一致 ASR 错字）。
+        dedup_prompt_path: 去重 prompt 模板路径。
+        output_path: 可选的输出路径。
 
     Returns:
         所有通过硬校验的 DeletionCandidate 列表。
     """
     all_candidates: list[DeletionCandidate] = []
+    all_rejected: list[dict] = []
+    per_window_debug: list[dict] = []
     total_duration = sum((w.end - w.start) for w in source_words)
 
-    seg_by_id = {s.segment_id: s for s in source_segments}
-
     for window in windows:
-        ws = _get_window_segments(window, source_segments)
-        ww = [w for w in source_words if w.segment_id in set(window.all_segment_ids)]
-        cv = corrected_views.get(window.window_id)
-        if cv is None:
-            cv = CorrectedView(
-                window_id=window.window_id,
-                source_text="".join(w.char for w in ww),
-                corrected_text="".join(w.char for w in ww),
-            )
+        ws = get_window_segments(window, source_segments)
+        ww = get_window_words(window, source_words)
 
-        validated = dedup_window(window, ws, ww, cv, global_context, dedup_prompt_path, total_duration)
+        validated = dedup_window(window, ws, ww, global_context, dedup_prompt_path, total_duration)
         all_candidates.extend(validated.accepted)
+        all_rejected.extend(validated.rejected)
+        per_window_debug.append({
+            "window_id": window.window_id,
+            "target_segments": window.target_segment_ids,
+            "allowed_edit": window.allowed_edit_segment_ids,
+            "accepted_count": len(validated.accepted),
+            "rejected_count": len(validated.rejected),
+            "rejected": validated.rejected,
+        })
 
-    logger.info("Total validated deletion candidates: %d across %d windows", len(all_candidates), len(windows))
+    logger.info("Total validated deletion candidates: %d across %d dedup windows", len(all_candidates), len(windows))
 
     if output_path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -94,6 +104,18 @@ def dedup_all_windows(
             json.dumps([c.model_dump() for c in all_candidates], ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        # 保存去重调试产物（每个窗口的 accepted + rejected 明细）
+        debug_path = output_path.parent / f"{output_path.stem}_dedup_debug.json"
+        debug_data = {
+            "total_candidates": len(all_candidates),
+            "total_rejected": len(all_rejected),
+            "per_window": per_window_debug,
+        }
+        debug_path.write_text(
+            json.dumps(debug_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logger.info("Dedup debug saved: %s", debug_path)
 
     return all_candidates
 
@@ -102,7 +124,7 @@ def _build_dedup_prompt(
     window: Window,
     window_segments: list[SourceSegment],
     window_words: list[SourceWord],
-    corrected_view: CorrectedView,
+    source_text: str,
     global_context: GlobalContext,
     template: str,
 ) -> str:
@@ -127,7 +149,7 @@ def _build_dedup_prompt(
     prompt = template.replace("{{window_id}}", window.window_id)
     prompt = prompt.replace("{{segments_json}}", segments_json)
     prompt = prompt.replace("{{words_json}}", words_json)
-    prompt = prompt.replace("{{corrected_text}}", corrected_view.corrected_text)
+    prompt = prompt.replace("{{source_text}}", source_text)
     prompt = prompt.replace("{{global_context}}", global_context.model_dump_json(indent=2))
     return prompt
 
@@ -155,14 +177,3 @@ def _parse_dedup_response(
             candidates.append(c)
     return candidates
 
-
-def _get_window_segments(
-    window: Window,
-    source_segments: list[SourceSegment],
-) -> list[SourceSegment]:
-    seg_by_id = {s.segment_id: s for s in source_segments}
-    result: list[SourceSegment] = []
-    for sid in window.all_segment_ids:
-        if sid in seg_by_id:
-            result.append(seg_by_id[sid])
-    return result

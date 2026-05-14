@@ -45,3 +45,4 @@ jobs/
 # Logs
 *.log
 logs/
+.understand-anything/

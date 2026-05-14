@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 
 import requests
 
@@ -60,25 +61,40 @@ class AliyunQwenProvider(LLMProvider):
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
-        resp = requests.post(self.endpoint, headers=headers, json=payload, timeout=self.timeout_seconds)
-        if resp.status_code >= 400:
-            raise ProviderError(f"Qwen API error status={resp.status_code}: {resp.text}")
-        data = resp.json()
-        try:
-            content = data["choices"][0]["message"]["content"]
-            if isinstance(content, str):
-                normalized = content.strip()
-                if normalized.startswith("```"):
-                    # 剥离代码围栏标记如 ```json ... ```
-                    normalized = normalized.strip("`")
-                    if normalized.startswith("json"):
-                        normalized = normalized[4:].strip()
-                parsed = json.loads(normalized)
-            else:
-                parsed = json.loads(content)
-            return parsed
-        except Exception as exc:
-            raise ProviderError(f"Qwen response JSON parse failed: {exc}; raw={str(data)[:1000]}")
+        logger.info("LLM call: model=%s prompt=%d chars", self.model, len(prompt))
+
+        max_retries = 3
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                resp = requests.post(self.endpoint, headers=headers, json=payload, timeout=self.timeout_seconds)
+                if resp.status_code >= 400:
+                    raise ProviderError(f"API error status={resp.status_code}: {resp.text}")
+                data = resp.json()
+                try:
+                    content = data["choices"][0]["message"]["content"]
+                    if isinstance(content, str):
+                        normalized = content.strip()
+                        if normalized.startswith("```"):
+                            normalized = normalized.strip("`")
+                            if normalized.startswith("json"):
+                                normalized = normalized[4:].strip()
+                        parsed = json.loads(normalized)
+                    else:
+                        parsed = json.loads(content)
+                    return parsed
+                except Exception as exc:
+                    raise ProviderError(f"response JSON parse failed: {exc}; raw={str(data)[:1000]}")
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                last_error = exc
+                if attempt < max_retries - 1:
+                    wait = (attempt + 1) * 30
+                    logger.warning("LLM call timeout (attempt %d/%d), retrying in %ds...", attempt + 1, max_retries, wait)
+                    time.sleep(wait)
+                else:
+                    raise ProviderError(f"LLM call failed after {max_retries} retries: {exc}") from exc
+
+        raise ProviderError(f"LLM call failed: {last_error}")
 
     # ── V2.5 新增方法 ──────────────────────────────────────
 
@@ -88,8 +104,7 @@ class AliyunQwenProvider(LLMProvider):
             prompt,
             system_prompt=(
                 "你只负责提取全局上下文，不要纠错，不要删内容，不要输出剪辑建议。"
-                "重点找：说话人自称、领域词、专有名词、固定表达、疑似 ASR 高频错词。"
-                "不确定的内容放入 uncertainties，不要自作主张。"
+                "重点找：全文摘要、说话人自称、全局ASR翻译不一致的词。"
             ),
         )
 

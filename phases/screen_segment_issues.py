@@ -36,7 +36,6 @@ def screen_segment_issues(
 
     min_priority = cfg.get("min_priority", "medium")
 
-    # 构建输入
     segments_json = json.dumps(
         [
             {
@@ -56,18 +55,31 @@ def screen_segment_issues(
         "{{global_context}}", global_context.model_dump_json(indent=2)
     )
 
+    raw_result: dict | None = None
+    rejected_items: list[dict] = []
+
     try:
-        result = provider.screen_segment_issues(prompt)
-        issues = [
-            SegmentIssue(
-                segment_id=item.get("segment_id", ""),
-                issue_types=item.get("issue_types", []),
-                priority=item.get("priority", "medium"),
-                evidence=item.get("evidence", ""),
-            )
-            for item in result.get("issues", [])
-            if _priority_meets(item.get("priority", "low"), min_priority)
-        ]
+        raw_result = provider.screen_segment_issues(prompt)
+        issues = []
+        for item in raw_result.get("issues", []):
+            priority = item.get("priority", "low")
+            if _priority_meets(priority, min_priority):
+                issues.append(
+                    SegmentIssue(
+                        segment_id=item.get("segment_id", ""),
+                        issue_types=item.get("issue_types", []),
+                        priority=priority,
+                        evidence=item.get("evidence", ""),
+                    )
+                )
+            else:
+                rejected_items.append({
+                    "segment_id": item.get("segment_id", ""),
+                    "priority": priority,
+                    "reject_reason": f"priority '{priority}' below min '{min_priority}'",
+                    "issue_types": item.get("issue_types", []),
+                    "evidence": item.get("evidence", ""),
+                })
         logger.info("Screening flagged %d segments for windows", len(issues))
     except ProviderError:
         logger.warning("Segment screening LLM call failed")
@@ -78,6 +90,21 @@ def screen_segment_issues(
     if output_path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(out.model_dump_json(indent=2), encoding="utf-8")
+
+        # 保存原始 LLM 返回（供排查筛查分类决策）
+        debug_path = output_path.parent / f"{output_path.stem}_screening_raw.json"
+        debug_data = {
+            "prompt_size": len(prompt),
+            "raw_llm_response": raw_result,
+            "accepted_count": len(issues),
+            "rejected_count": len(rejected_items),
+            "rejected": rejected_items,
+        }
+        debug_path.write_text(
+            json.dumps(debug_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logger.info("Screening raw response saved: %s", debug_path)
 
     return out
 

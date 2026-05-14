@@ -76,14 +76,23 @@ def _validate_one(
     if c.type == "replace_display_span":
         if len(c.word_ids) < 2:
             errors.append("replace_display_span requires at least 2 word_ids")
+        # 多字替换必须是同音/近音——至少有一个公共字符
+        if c.from_text and c.to_text:
+            common_chars = set(c.from_text) & set(c.to_text)
+            if not common_chars:
+                errors.append(f"heterophone replacement rejected: '{c.from_text}' -> '{c.to_text}' (no common char, not homophonic)")
+
+    if c.type == "delete_display_noise":
+        if len(c.word_ids) > 1:
+            errors.append(f"delete_display_noise can only hide 1 char, got {len(c.word_ids)} word_ids")
 
     if c.type == "insert_display":
         if not c.to_text:
             errors.append("insert_display requires non-empty to_text")
         if c.after_word_id and c.after_word_id not in words_by_id:
             errors.append(f"after_word_id {c.after_word_id} not found in source words")
-        if len(c.to_text) > 4:
-            errors.append(f"insert_display text too long: {len(c.to_text)} > 4 chars")
+        if len(c.to_text) > 2:
+            errors.append(f"insert_display text too long: {len(c.to_text)} > 2 chars")
 
     if c.type in ("replace_display", "replace_display_span"):
         if not c.to_text:
@@ -92,7 +101,6 @@ def _validate_one(
             ratio = len(c.to_text) / max(len(c.from_text), 1)
             if ratio > 1.6 or ratio < 0.4:
                 errors.append(f"length ratio {ratio:.2f} out of [0.4, 1.6]")
-            # 单字符替换时跳过相似度检查 (如 "也" -> "姐")
             if len(c.from_text) > 1 or len(c.to_text) > 1:
                 similarity = SequenceMatcher(None, c.from_text, c.to_text).ratio()
                 if similarity < 0.3:

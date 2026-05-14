@@ -47,6 +47,7 @@ def remap_timeline(
                         start=ws,
                         end=we,
                         timestamp_source=w.timestamp_source,
+                        word_id=w.word_id,
                     )
                 )
         text = "".join(w.word for w in words) if words and (clamped_start != seg.start or clamped_end != seg.end) else seg.text
@@ -89,6 +90,7 @@ def _remap_segment_by_words(seg: TranscriptSegment, edits: list) -> list[Transcr
                         start=ws,
                         end=we,
                         timestamp_source=word.timestamp_source,
+                        word_id=word.word_id,
                     )
                 )
         if not words:

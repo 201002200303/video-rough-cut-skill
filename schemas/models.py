@@ -12,6 +12,10 @@ class TranscriptWord(BaseModel):
     start: float = Field(..., description="Start time in seconds")
     end: float = Field(..., description="End time in seconds")
     timestamp_source: str = Field(default="estimated", description="provider or estimated")
+    word_id: str | None = Field(
+        default=None,
+        description="Optional global word id (w-0001) aligned with SourceWord after enrich; used for subtitle patch routing",
+    )
 
     @field_validator("start")
     @classmethod
@@ -60,60 +64,6 @@ class TranscriptSegment(BaseModel):
 class Transcript(BaseModel):
     language: str = Field(default="zh", description="Language code")
     segments: list[TranscriptSegment] = Field(default_factory=list, description="Ordered transcript segments")
-
-
-class SemanticSegment(BaseModel):
-    segment_id: str = Field(..., description="Segment identifier")
-    start: float = Field(..., description="Start time in seconds")
-    end: float = Field(..., description="End time in seconds")
-    text: str = Field(..., description="Combined text of this segment")
-    source_segment_ids: list[str] = Field(default_factory=list, description="Transcript segment IDs")
-
-    @field_validator("start")
-    @classmethod
-    def start_non_negative(cls, value: float) -> float:
-        if value < 0:
-            raise ValueError("start must be >= 0")
-        return value
-
-    @field_validator("end")
-    @classmethod
-    def end_after_start(cls, value: float, info) -> float:
-        if info.data.get("start") is not None and value <= info.data["start"]:
-            raise ValueError("end must be > start")
-        return value
-
-
-class UtteranceUnit(BaseModel):
-    unit_id: str = Field(..., description="Utterance unit identifier")
-    start: float = Field(..., description="Start time in seconds")
-    end: float = Field(..., description="End time in seconds")
-    text: str = Field(..., description="Original text for this unit")
-    analysis_text: str = Field(default="", description="Corrected text used for LLM analysis only")
-    source_segment_ids: list[str] = Field(default_factory=list, description="Transcript segment IDs")
-    words: list[TranscriptWord] = Field(default_factory=list, description="Provider word boundaries in this unit")
-    timestamp_source: str = Field(default="estimated", description="provider or estimated")
-
-    @field_validator("start")
-    @classmethod
-    def unit_start_non_negative(cls, value: float) -> float:
-        if value < 0:
-            raise ValueError("start must be >= 0")
-        return value
-
-    @field_validator("end")
-    @classmethod
-    def unit_end_after_start(cls, value: float, info) -> float:
-        if info.data.get("start") is not None and value <= info.data["start"]:
-            raise ValueError("end must be > start")
-        return value
-
-    @field_validator("timestamp_source")
-    @classmethod
-    def unit_valid_timestamp_source(cls, value: str) -> str:
-        if value not in ("provider", "estimated"):
-            raise ValueError("timestamp_source must be 'provider' or 'estimated'")
-        return value
 
 
 class EditDecision(BaseModel):
@@ -320,16 +270,24 @@ class DeletionCandidate(BaseModel):
 
 
 class GlobalContext(BaseModel):
-    """Output of global semantic analysis phase."""
+    """Output of global semantic analysis phase.
 
-    topic: str = Field(default="", description="Video topic")
-    speaker_aliases: list[str] = Field(default_factory=list, description="Speaker name variants")
-    confirmed_terms: list[str] = Field(default_factory=list, description="User-confirmed proper nouns")
-    domain_terms: list[str] = Field(default_factory=list, description="Domain-specific terminology")
-    possible_misrecognitions: list[dict] = Field(
-        default_factory=list, description="Likely ASR misrecognitions with evidence"
+    Only provides information that per-segment prompts cannot self-derive:
+    - summary: high-level content anchor for downstream disambiguation
+    - topic: domain anchor for disambiguation
+    - speaker: ASR-inconsistent self-reference variants → canonical
+    - canonical_terms: terms that appear multiple times with inconsistent ASR output → canonical
+    """
+
+    summary: str = Field(default="", description="2-3 sentence summary of the full transcript: core thesis, main topics, speaker stance")
+    topic: str = Field(default="", description="Video topic (domain anchor)")
+    speaker_aliases: list[str] = Field(default_factory=list, description="Speaker name variants from ASR")
+    canonical_speaker_name: str = Field(default="", description="Most likely standard speaker name, empty if not applicable")
+    canonical_speaker_confidence: float = Field(default=0.0, description="Confidence for canonical_speaker_name, 0.0-1.0")
+    canonical_terms: list[dict] = Field(
+        default_factory=list,
+        description="Terms with inconsistent ASR output across segments: {canonical, variants, evidence, confidence}",
     )
-    uncertain_items: list[dict] = Field(default_factory=list, description="Items needing user confirmation")
 
 
 class SegmentIssue(BaseModel):
@@ -347,9 +305,15 @@ class SegmentIssue(BaseModel):
 
 
 class Window(BaseModel):
-    """Five-segment analysis window for LLM correction and dedup phases."""
+    """Five-segment analysis window for LLM correction or dedup phase.
+
+    phase 字段区分窗口用途：
+    - "correction" → 只做 ASR 纠错（DisplayPatch），不改时间轴
+    - "dedup"      → 只做口误删除（DeletionCandidate），不改字幕
+    """
 
     window_id: str = Field(..., description="Window identifier")
+    phase: str = Field(default="correction", description="correction or dedup")
     target_segment_ids: list[str] = Field(..., description="Segments that may be edited")
     left_context_segment_ids: list[str] = Field(default_factory=list, description="Read-only left context")
     right_context_segment_ids: list[str] = Field(default_factory=list, description="Read-only right context")
@@ -381,17 +345,6 @@ class CorrectionCandidate(BaseModel):
             raise ValueError("confidence must be between 0.0 and 1.0")
         return value
 
-
-class CorrectedView(BaseModel):
-    """Temporary per-window corrected text view. Used only by dedup LLM, never persisted."""
-
-    window_id: str = Field(..., description="Parent window ID")
-    source_text: str = Field(..., description="Original concatenated text")
-    corrected_text: str = Field(..., description="Text after applying validated display patches")
-    applied_patch_ids: list[str] = Field(default_factory=list, description="Patches applied to create this view")
-    word_id_mapping: dict[str, list[str]] = Field(
-        default_factory=dict, description="Mapping: original_word_id -> [contributing display word ids]"
-    )
 
 
 class ValidatedPatchFile(BaseModel):

@@ -17,16 +17,7 @@ def analyze_global_context(
     global_context_prompt_path: Path,
     output_path: Path | None = None,
 ) -> GlobalContext:
-    """调用 LLM 提取全局语义上下文。
-
-    Args:
-        source_segments_text: 拼接后的全文文本。
-        global_context_prompt_path: prompt 模板路径。
-        output_path: 可选的输出路径。
-
-    Returns:
-        GlobalContext 包含 topic, speaker_aliases, domain_terms 等。
-    """
+    """调用 LLM 提取全局语义上下文。"""
     cfg = load_config().get("global_context", {})
     if not bool(cfg.get("enabled", True)):
         logger.info("Global context analysis disabled")
@@ -39,19 +30,23 @@ def analyze_global_context(
     try:
         result = provider.analyze_global_context(prompt)
         ctx = GlobalContext(
+            summary=result.get("summary", ""),
             topic=result.get("topic", ""),
             speaker_aliases=result.get("speaker_aliases", []),
-            confirmed_terms=result.get("confirmed_terms", []),
-            domain_terms=result.get("domain_terms", []),
-            possible_misrecognitions=result.get("possible_misrecognitions", []),
-            uncertain_items=result.get("uncertain_items", []),
+            canonical_speaker_name=result.get("canonical_speaker_name", ""),
+            canonical_speaker_confidence=float(result.get("canonical_speaker_confidence", 0.0)),
+            canonical_terms=result.get("canonical_terms", []),
         )
+        canonical_info = ""
+        if ctx.canonical_speaker_name and ctx.canonical_speaker_confidence > 0:
+            canonical_info = f" canonical={ctx.canonical_speaker_name}({ctx.canonical_speaker_confidence:.0%})"
         logger.info(
-            "Global context: topic=%s aliases=%d terms=%d misrecognitions=%d",
+            "Global context: topic=%s summary=%s... aliases=%d canonical_terms=%d%s",
             ctx.topic,
+            ctx.summary[:40] if ctx.summary else "(无)",
             len(ctx.speaker_aliases),
-            len(ctx.domain_terms),
-            len(ctx.possible_misrecognitions),
+            len(ctx.canonical_terms),
+            canonical_info,
         )
     except ProviderError:
         logger.warning("Global context LLM call failed, using empty context")

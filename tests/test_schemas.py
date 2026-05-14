@@ -20,7 +20,6 @@ from core.utils import (
 from schemas.models import (
     EditDecision,
     EditDecisionFile,
-    SemanticSegment,
     SkillInput,
     SkillOutput,
     Transcript,
@@ -68,18 +67,6 @@ class TestTranscript:
         transcript = Transcript(language="zh", segments=[segment])
         restored = Transcript.model_validate_json(transcript.model_dump_json())
         assert restored.segments[0].text == "hello"
-
-
-class TestSemanticSegment:
-    def test_valid(self):
-        segment = SemanticSegment(segment_id="seg0", start=0.0, end=10.0, text="content")
-        assert segment.segment_id == "seg0"
-
-    def test_invalid_times(self):
-        with pytest.raises(PydanticValidationError):
-            SemanticSegment(segment_id="x", start=-1.0, end=5.0, text="x")
-        with pytest.raises(PydanticValidationError):
-            SemanticSegment(segment_id="x", start=5.0, end=3.0, text="x")
 
 
 class TestEditDecision:
@@ -189,6 +176,11 @@ class TestPaths:
 class TestRunPipeline:
     def test_pipeline_returns_paths_with_stubbed_steps(self, monkeypatch):
         from scripts.run import run_pipeline
+        from schemas.models import (
+            SourceWord, SourceSegment, GlobalContext,
+            SegmentIssueFile, WindowFile, DisplayPatch, DeletionCandidate,
+            EditDecisionFile, EditDecision, VisualMetadata,
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             out_dir = Path(tmp) / "pipeline_output"
@@ -205,24 +197,30 @@ class TestRunPipeline:
                     TranscriptSegment(id="s2", start=1.8, end=2.6, text="second", words=[]),
                 ],
             )
+
             monkeypatch.setattr("scripts.run.extract_audio", fake_extract_audio)
             monkeypatch.setattr(
                 "scripts.run.detect_vad",
-                lambda *args, **kwargs: {"speech_segments": [], "silence_segments": []},
+                lambda *args, **kwargs: {"speech_segments": [], "silence_segments": [], "duration": 3.0},
             )
             monkeypatch.setattr("scripts.run.transcribe_audio", lambda *args, **kwargs: fake_transcript)
             monkeypatch.setattr("scripts.run.split_transcript_segments_on_word_gaps", lambda transcript, *args, **kwargs: transcript)
-            monkeypatch.setattr("scripts.run.build_utterance_units", lambda *args, **kwargs: [])
-            monkeypatch.setattr("scripts.run.detect_unit_deletions", lambda units, *args, **kwargs: (units, [], []))
-            monkeypatch.setattr("scripts.run.detect_local_false_start_repairs", lambda *args, **kwargs: ([], []))
-            monkeypatch.setattr("scripts.run.write_utterance_units", lambda *args, **kwargs: None)
-            monkeypatch.setattr("scripts.run.detect_content_cleanup", lambda *args, **kwargs: ([], []))
+            monkeypatch.setattr("scripts.build_source_words.build_source_words", lambda *args, **kwargs: [])
+            monkeypatch.setattr("scripts.build_source_segments.build_source_segments", lambda *args, **kwargs: [])
+            monkeypatch.setattr("phases.analyze_global_context.analyze_global_context", lambda *args, **kwargs: GlobalContext())
+            monkeypatch.setattr("phases.screen_segment_issues.screen_segment_issues", lambda *args, **kwargs: SegmentIssueFile())
+            monkeypatch.setattr("phases.build_windows.build_windows", lambda *args, **kwargs: WindowFile())
+            monkeypatch.setattr("phases.correct_window.correct_all_windows", lambda *args, **kwargs: [])
+            monkeypatch.setattr("phases.dedup_window.dedup_all_windows", lambda *args, **kwargs: [])
+            monkeypatch.setattr("scripts.run.detect_pauses", lambda *args, **kwargs: [])
+            monkeypatch.setattr("scripts.run.detect_post_delete_pauses", lambda *args, **kwargs: [])
             monkeypatch.setattr(
-                "scripts.run.resolve_edit_boundaries",
-                lambda edits, transcript, vad_data, review_needed: (edits, review_needed),
+                "scripts.run.plan_edits",
+                lambda pause_edits, deletion_candidates, source_words, output_path, validation_cfg: EditDecisionFile(),
             )
-            monkeypatch.setattr("scripts.run.generate_transcript_debug_files", lambda *args, **kwargs: None)
-            monkeypatch.setattr("scripts.run.correct_subtitle_text", lambda transcript, *args, **kwargs: transcript)
+            monkeypatch.setattr("scripts.run.remap_timeline", lambda transcript, edit_file, output_path: transcript)
+            monkeypatch.setattr("scripts.run.generate_subtitles", lambda *args, **kwargs: None)
+            monkeypatch.setattr("scripts.run.generate_visual_metadata", lambda *args, **kwargs: VisualMetadata(enabled=False))
             monkeypatch.setattr("scripts.run.render_video", lambda **kwargs: kwargs["output_video_path"])
             monkeypatch.setattr("scripts.run.generate_report", lambda **kwargs: kwargs["output_path"])
 

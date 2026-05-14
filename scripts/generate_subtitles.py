@@ -6,11 +6,10 @@ from pathlib import Path
 
 from core.utils import load_config
 from core.utils import setup_logger
-from schemas.models import DisplayPatch, Transcript
+from schemas.models import DisplayPatch, SourceWord, Transcript
+from validators.correction_validator import apply_display_patches
 
 logger = setup_logger(__name__)
-
-
 def generate_subtitles(
     remapped_transcript: Transcript,
     output_path: Path,
@@ -75,30 +74,67 @@ def _build_patch_text_map(
     patches: list[DisplayPatch],
     transcript: Transcript,
 ) -> dict[str, str]:
-    """构建 segment_id -> patched text 映射。"""
+    """构建 segment_id -> patched text 映射。
+
+    优先使用 TranscriptWord.word_id + apply_display_patches（与校验器一致，支持 insert_display）。
+    无 word_id 的旧转写降级为按段内子串替换（insert 无法应用）。
+    """
     result: dict[str, str] = {}
+
     for seg in transcript.segments:
         text = seg.text
-        seg_patches = [p for p in patches if any(
-            wid.startswith(f"w-") and True for wid in p.word_ids
-        )]
+        segment_word_ids = {w.word_id for w in seg.words if w.word_id}
+
+        seg_patches: list[DisplayPatch] = []
+        if segment_word_ids:
+            for p in patches:
+                if p.type == "insert_display":
+                    if p.after_word_id and p.after_word_id in segment_word_ids:
+                        seg_patches.append(p)
+                elif p.word_ids and any(wid in segment_word_ids for wid in p.word_ids):
+                    seg_patches.append(p)
+        else:
+            for p in patches:
+                if p.type in ("replace_display", "replace_display_span") and p.from_text and p.from_text in text:
+                    seg_patches.append(p)
+                elif p.type == "delete_display_noise" and p.from_text and p.from_text in text:
+                    seg_patches.append(p)
+
         if not seg_patches:
             result[seg.id] = text
             continue
-        for patch in seg_patches:
-            if patch.type == "replace_display":
-                if patch.from_text and patch.from_text in text:
-                    text = text.replace(patch.from_text, patch.to_text, 1)
-            elif patch.type == "replace_display_span":
-                if patch.from_text and patch.from_text in text:
-                    text = text.replace(patch.from_text, patch.to_text, 1)
-            elif patch.type == "delete_display_noise":
-                if patch.from_text:
-                    text = text.replace(patch.from_text, "", 1)
-            elif patch.type == "insert_display":
-                # Insert after a word — simple heuristic: prepend to text
-                pass
+
+        if segment_word_ids and seg.words and all(w.word_id for w in seg.words):
+            pseudo_words = [
+                SourceWord(
+                    word_id=w.word_id,  # type: ignore[arg-type] — 已由 all() 保证
+                    char=w.word,
+                    start=w.start,
+                    end=w.end,
+                    segment_id=seg.id,
+                    timestamp_source=w.timestamp_source,
+                    provider="funasr",
+                )
+                for w in seg.words
+            ]
+            text = apply_display_patches(pseudo_words, seg_patches)
+        else:
+            # 旧产物：无 word_id，仅能做子串级 replace/delete；insert 跳过
+            for patch in seg_patches:
+                if patch.type == "insert_display":
+                    continue
+                if patch.type == "replace_display":
+                    if patch.from_text and patch.from_text in text:
+                        text = text.replace(patch.from_text, patch.to_text, 1)
+                elif patch.type == "replace_display_span":
+                    if patch.from_text and patch.from_text in text:
+                        text = text.replace(patch.from_text, patch.to_text, 1)
+                elif patch.type == "delete_display_noise":
+                    if patch.from_text:
+                        text = text.replace(patch.from_text, "", 1)
+
         result[seg.id] = text
+
     return result
 
 

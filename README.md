@@ -2,7 +2,7 @@
 
 中文口播视频粗剪 Skill，用于把本地中文单人口播、财经复盘、课程讲解等视频处理成带字幕、封面图、固定叠字和风险提示的粗剪成片。
 
-这个项目的定位不是 Web 服务，也不是通用剪辑软件，而是给 Codex 或本地命令行调用的一条确定性视频处理流水线：FunASR 负责本地转写和时间戳，Qwen LLM 负责语义删除候选、连贯性复核和字幕纠错，FFmpeg 负责音频提取、剪切拼接、字幕烧录、封面生成。
+这个项目的定位不是 Web 服务，也不是通用剪辑软件，而是给 Codex 或本地命令行调用的一条确定性视频处理流水线：FunASR 负责本地转写和时间戳，deepseek-v4-pro LLM 负责语义删除、去重和字幕纠错，FFmpeg 负责音频提取、剪切拼接、字幕烧录、封面生成。
 
 ## 适用场景
 
@@ -23,7 +23,7 @@
 
 - Python 3.10 到 3.12。当前依赖锁定了 `torch==2.2.2+cpu`，不建议使用 Python 3.13。
 - FFmpeg 和 FFprobe，并且需要能在命令行中直接运行 `ffmpeg`、`ffprobe`。
-- DashScope API Key，用于 Qwen LLM 调用。默认本地 ASR 使用 FunASR，但语义删除、连贯性复核、字幕纠错需要 `DASHSCOPE_API_KEY`。
+- DashScope API Key，用于 LLM 调用（当前模型为 `deepseek-v4-pro`，通过 DashScope 兼容接口）。默认本地 ASR 使用 FunASR。
 - 建议准备一段竖屏中文口播视频，例如 `mp4` 文件。
 
 ## Windows 启动
@@ -76,7 +76,7 @@ notepad .env
 
 ```dotenv
 DASHSCOPE_API_KEY=你的_dashscope_api_key
-DASHSCOPE_LLM_MODEL=qwen-plus
+DASHSCOPE_LLM_MODEL=deepseek-v4-pro
 FUNASR_DEVICE=cpu
 ```
 
@@ -142,7 +142,7 @@ nano .env
 
 ```dotenv
 DASHSCOPE_API_KEY=你的_dashscope_api_key
-DASHSCOPE_LLM_MODEL=qwen-plus
+DASHSCOPE_LLM_MODEL=deepseek-v4-pro
 FUNASR_DEVICE=cpu
 ```
 
@@ -150,7 +150,7 @@ FUNASR_DEVICE=cpu
 
 ```bash
 export DASHSCOPE_API_KEY="你的_dashscope_api_key"
-export DASHSCOPE_LLM_MODEL="qwen-plus"
+export DASHSCOPE_LLM_MODEL="deepseek-v4-pro"
 export FUNASR_DEVICE="cpu"
 ```
 
@@ -250,7 +250,7 @@ python -m scripts.run --video "/data/input.mp4" --output-dir "/data/out" --visua
 - `subtitle`：主字幕字体、字号、颜色、位置。
 - `visual_overlay`：封面、右上角标签、底部介绍和固定提示语。
 - `render`：FFmpeg 编码参数和渲染策略。
-- `aliyun.llm`：Qwen LLM 模型、温度、超时。
+- `aliyun.llm`：LLM 模型、温度、超时。
 - `funasr`：本地 ASR 模型、设备和句级时间戳。
 
 如果不想直接修改默认配置，可以新建一个覆盖配置文件，并通过环境变量指定：
@@ -318,7 +318,7 @@ ffprobe -version
 检查 `.env` 中的 `DASHSCOPE_API_KEY` 是否正确，模型是否有权限。默认建议使用：
 
 ```dotenv
-DASHSCOPE_LLM_MODEL=qwen-plus
+DASHSCOPE_LLM_MODEL=qwen3.6-plus
 ```
 
 ### 首次运行很慢

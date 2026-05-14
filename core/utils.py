@@ -117,6 +117,34 @@ def resolve_command(command: str) -> str:
             resolved = shutil.which(command + suffix)
             if resolved:
                 return resolved
+        # 搜索常见 Windows 安装路径
+        exe_name = f"{command}.exe"
+        search_roots = [
+            os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages"),
+            r"C:\ProgramData\chocolatey\bin",
+            r"C:\ffmpeg\bin",
+            r"C:\Program Files\ffmpeg\bin",
+            r"C:\Program Files (x86)\ffmpeg\bin",
+        ]
+        for root in search_roots:
+            if not os.path.isdir(root):
+                continue
+            if os.path.isfile(os.path.join(root, exe_name)):
+                return os.path.join(root, exe_name)
+            # winget: 递归搜索子目录（最多3层）
+            try:
+                for entry in os.scandir(root):
+                    if entry.is_dir():
+                        for dirpath, _dirnames, filenames in os.walk(entry.path):
+                            if exe_name in filenames:
+                                return os.path.join(dirpath, exe_name)
+                            # 限制深度，避免搜索太深
+                            depth = dirpath[len(entry.path):].count(os.sep)
+                            if depth >= 3:
+                                _dirnames.clear()
+            except OSError:
+                continue
+
     return command
 
 

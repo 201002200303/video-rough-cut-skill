@@ -7,7 +7,6 @@ from pydantic import ValidationError as PydanticValidationError
 
 from schemas.models import (
     CorrectionCandidate,
-    CorrectedView,
     DeletionCandidate,
     DisplayPatch,
     GlobalContext,
@@ -144,31 +143,38 @@ class TestGlobalContext:
     def test_default_global_context(self):
         ctx = GlobalContext()
         assert ctx.topic == ""
+        assert ctx.summary == ""
         assert ctx.speaker_aliases == []
 
     def test_global_context_with_data(self):
         ctx = GlobalContext(
+            summary="全文回顾今日A股走势，核心论点是明天大概率高开低走。",
             topic="财经复盘",
             speaker_aliases=["板姐"],
-            confirmed_terms=["定心丸"],
-            domain_terms=["K线", "均线"],
-            possible_misrecognitions=[{"original": "板也", "suggested": "板姐", "confidence": 0.92}],
-            uncertain_items=[{"item": "品牌名", "question": "是否有固定写法？"}],
+            canonical_speaker_name="板姐",
+            canonical_speaker_confidence=0.92,
+            canonical_terms=[
+                {"canonical": "定心丸", "variants": ["定性晚", "定心丸"], "evidence": "全文3次", "confidence": 0.93},
+                {"canonical": "仓位", "variants": ["仓位", "苍位"], "evidence": "全文5次", "confidence": 0.95},
+            ],
         )
         assert ctx.topic == "财经复盘"
+        assert "A股" in ctx.summary
         assert len(ctx.speaker_aliases) == 1
-        assert len(ctx.possible_misrecognitions) == 1
+        assert len(ctx.canonical_terms) == 2
 
     def test_global_context_json_roundtrip(self):
         ctx = GlobalContext(
+            summary="装修教程，主要讲墙面阴阳角处理和美缝技巧。",
             topic="装修",
             speaker_aliases=["老王"],
-            domain_terms=["阴阳角", "美缝"],
+            canonical_terms=[{"canonical": "阴阳角", "variants": ["阴阳角", "阴凉角"], "evidence": "全文2次", "confidence": 0.88}],
         )
         json_str = ctx.model_dump_json()
         restored = GlobalContext.model_validate_json(json_str)
         assert restored.topic == "装修"
         assert restored.speaker_aliases == ["老王"]
+        assert len(restored.canonical_terms) == 1
 
 
 class TestSegmentIssue:
@@ -238,28 +244,6 @@ class TestCorrectionCandidate:
         )
         assert c.window_id == "win-000"
         assert c.type == "replace_display"
-
-
-class TestCorrectedView:
-    def test_corrected_view(self):
-        cv = CorrectedView(
-            window_id="win-000",
-            source_text="我觉得这个不是，我们先看墙面",
-            corrected_text="我觉得这个不是，我们先看墙面",
-            applied_patch_ids=["dp-win-000-000"],
-        )
-        assert cv.window_id == "win-000"
-        assert cv.source_text == cv.corrected_text
-
-    def test_corrected_view_with_changes(self):
-        cv = CorrectedView(
-            window_id="win-001",
-            source_text="板也今天认为",
-            corrected_text="板姐今天认为",
-            applied_patch_ids=["dp-win-001-000"],
-            word_id_mapping={"w-0122": ["w-0122"]},
-        )
-        assert cv.source_text != cv.corrected_text
 
 
 class TestValidatedFiles:

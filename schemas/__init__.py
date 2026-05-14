@@ -3,7 +3,6 @@
 from schemas.models import (
     EditDecision,
     EditDecisionFile,
-    SemanticSegment,
     SkillInput,
     SkillOutput,
     Transcript,
@@ -15,7 +14,6 @@ __all__ = [
     "TranscriptWord",
     "TranscriptSegment",
     "Transcript",
-    "SemanticSegment",
     "EditDecision",
     "EditDecisionFile",
     "SkillInput",

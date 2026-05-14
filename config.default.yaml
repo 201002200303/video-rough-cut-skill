@@ -73,56 +73,12 @@ dedup:
   allow_partial_time_range_delete: false             # 是否允许 LLM 直接给任意时间范围；false 表示只能删完整编号单元。
   unit_llm_chunk_size: 24                            # 每次送给 LLM 的语义单元数量；越大上下文多但更慢。
 
-# 局部口误/改口字级修剪：当“删完整 unit”失败但明显是口误时，回退到 provider 字边界细修。
-local_false_start_refine:
-  enabled: true                    # 是否启用字级局部修剪兜底。
-  max_window_units_before: 1       # 失败 unit 前带多少个 unit 给 LLM 判断。
-  max_window_units_after: 2        # 失败 unit 后带多少个 unit 给 LLM 判断。
-  min_confidence: 0.92             # 字级修剪候选最低置信度；越高越保守。
-  continuity_min_confidence: 0.90  # 字级修剪后连贯性复核最低置信度。
-  max_delete_duration: 4.0         # 单次字级修剪最长删除时长，防止误删大段内容。
-  min_remaining_chars: 6           # 修剪窗口删除后至少保留多少字，避免只剩残片。
-  allow_multiple_ranges: false     # 单个失败 review 是否允许多个删除范围；false 更安全。
-
-# 语义单元构建：把 transcript 切成编号 unit，供 LLM 删除判断。
-utterance_unit:
-  max_duration: 6.0               # 单个 unit 最长时长；越短 LLM 判断更细，但调用上下文更碎。
-  min_duration: 0.35              # 单个 unit 最短时长；太短会产生很多碎 unit。
-  word_gap_split_threshold: 0.45  # unit 内字间停顿超过此值会切开；越小越容易把句内停顿切成两个 unit。
-
 # ASR 原始段预切分：在语义分析前，先按长字间停顿拆 transcript segment。
 transcript_segment_split:
   enabled: true            # 是否启用 ASR 段内长停顿拆分；建议 true，利于 false start 被单独识别。
   word_gap_threshold: 0.5  # 字间停顿超过此值拆成新 segment；越小越细，越大越保守。
   min_segment_duration: 0.35 # 拆出的 segment 最短时长，低于该值会避免拆得太碎。
   min_segment_chars: 2       # 拆出的 segment 最少字符数，低于该值会避免生成孤字碎片。
-
-# 内容清理：额外让 LLM 找“废话/跑题/无效提醒”等可删内容；默认关闭以提速。
-content_cleanup:
-  enabled: false               # 是否启用内容清理 LLM。
-  auto_delete_enabled: false   # 内容清理是否允许自动删除；false 只审查不执行。
-  llm_review_enabled: false    # 是否让 LLM 产出 review 建议。
-  min_confidence_to_delete: 0.93 # 内容清理自动删除最低置信度。
-  max_auto_delete_duration: 3.0  # 内容清理单段自动删除最长时长。
-  boundary_guard: 0.25           # 内容清理删除范围两侧保护边。
-  max_segment_chars: 300         # 内容清理单段传给 LLM 的最大字符数。
-  review_on_uncertain: true      # 不确定项是否写入 review_needed。
-
-# 字幕文本纠错：只改字幕文字，不改时间轴。
-subtitle_correction:
-  enabled: true          # 是否启用字幕纠错 LLM。
-  max_segment_chars: 120 # 单条字幕传给 LLM 的最大字符数，防止输入过长。
-  context_segments: 1    # 字幕纠错时带前后各多少条上下文；越大更懂语义，但更慢。
-  max_context_chars: 80  # 每侧上下文最多字符数。
-  max_length_ratio: 1.6  # 修正后长度相对原文的最大/最小比例保护，避免扩写或大删。
-  min_similarity: 0.45   # 修正文本与原文最低相似度；越高越保守，越低越能修语义型错字。
-  chunk_size: 12         # 每次送给 LLM 的字幕条数；越大调用少，但单次上下文更长。
-
-# 语义段构建：把 transcript 聚合成中等长度段，供旧版语义检测/报告使用。
-semantic_segment:
-  min_duration: 5.0        # 语义段最短目标时长。
-  target_max_duration: 15.0 # 语义段目标最长时长。
-  hard_max_duration: 20.0   # 语义段硬上限，超过会强制切分。
 
 # 运行模式覆盖：命令行 --mode 会把这里的值覆盖到默认配置上。
 modes:
@@ -243,11 +199,11 @@ aliyun:
     enable_punctuation: true       # 云端 ASR 是否启用标点。
     enable_timestamp: true         # 云端 ASR 是否启用时间戳。
   llm:
-    model: "qwen-plus"             # LLM 模型名，用于语义删除、连贯性复核、字幕纠错。
+    model: "qwen3.6-plus"       # LLM 模型名，用于语义删除、去重、字幕纠错。
     base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1" # LLM 接口地址。
     temperature: 0.1               # 采样温度；越低越稳定，适合剪辑决策。
     max_tokens: 2048               # 单次 LLM 最大输出 token。
-    timeout_seconds: 180           # 单次 LLM 请求超时时间；网络慢或输入长时可调大。
+    timeout_seconds: 900           # 单次 LLM 请求超时时间；长输入时需要更大值。
 
 # ─────────────────────────────────────────────────────────
 # V2.5 新增配置 — Semantic Window Patch Pipeline
@@ -282,6 +238,6 @@ validation:
   deletion_min_confidence: 0.88    # 删除候选最低置信度。
   max_window_delete_ratio: 0.15    # 单个窗口内累计删除比例上限。
   max_total_delete_ratio: 0.22     # 整条视频累计删除比例上限。
-  max_single_delete_duration: 3.0  # 单段删除最长时长（秒）。
+  max_single_delete_duration: 5.0  # 单段删除最长时长（秒）。
   min_padding_before: 0.06         # 删除范围前向保留边（秒）。
   min_padding_after: 0.08          # 删除范围后向保留边（秒）。

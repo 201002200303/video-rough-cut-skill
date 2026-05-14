@@ -9,11 +9,8 @@ Chinese spoken-video rough-cutting pipeline (中文口播视频粗剪). Takes a 
 ## Common Commands
 
 ```bash
-# Run the V2 pipeline (legacy)
+# Run the pipeline
 python -m scripts.run --video "/path/to/input.mp4" --output-dir "/path/to/out" --mode standard
-
-# Run the V2.5 pipeline (Semantic Window Patch)
-python -m scripts.run --video "/path/to/input.mp4" --output-dir "/path/to/out" --mode standard --pipeline v25
 
 # Run all tests
 pytest
@@ -23,6 +20,9 @@ pytest tests/test_schemas.py
 
 # Run a single test
 pytest tests/test_v25_models.py::TestSourceWord::test_valid_provider_word
+
+# Run pipeline core tests (validators + windows + models)
+pytest tests/test_v25_models.py tests/test_correction_validator.py tests/test_deletion_validator.py tests/test_boundary_validator.py tests/test_build_windows.py
 
 # Smoke test (requires real video + API key)
 python scripts/dev_smoke_test.py
@@ -38,29 +38,20 @@ bash scripts/setup_linux.sh
 
 ### Pipeline Flow (scripts/run.py)
 
-`run_pipeline()` orchestrates 20 sequential steps. Each step is a standalone module in `scripts/`:
+`run_pipeline()` 是唯一的流水线入口，19 个阶段：
 
-1. **Audio extraction** → FFmpeg 16kHz mono WAV
-2. **VAD detection** → FFmpeg silencedetect
-3. **ASR transcription** → FunASR (primary, `timestamp_source=provider`) or Aliyun DashScope (fallback, `timestamp_source=estimated`)
-4. **Transcript segment splitting** → split ASR segments on long word gaps (configurable threshold, default 0.5s)
-5. **Semantic segment building** → merge segments into 5-15s semantic groups for LLM context
-6. **Utterance unit building** → split into stable-numbered 0.35-6s units with word boundaries
-7. **Unit deletion detection** → LLM finds semantic duplicates and false starts at unit granularity
-8. **Local false-start refinement** → LLM does word-level repair when unit-level deletion fails
-9. **Content cleanup** → LLM finds off-topic/wasteful content (**disabled by default**; enable via `content_cleanup.enabled: true`)
-10. **Edit boundary resolution** → validate LLM-proposed cuts against `timestamp_source` and VAD data
-11. **Pause detection** → rule-based pause compression (no LLM)
-12. **Post-delete pause detection** → detect pauses that emerge after semantic deletions are applied
-13. **Edit planning** → merge overlapping deletes, subtract deletes from pause ranges, produce final edit list
-14. **Timeline remap** → rewrite all timestamps after edits
-15. **Subtitle correction** → LLM text correction bounded by similarity/length ratio safety checks
-16. **Transcript debug generation** → write before/after markdown for human review
-17. **ASS subtitle generation** → adaptive font sizing with wrapping and `...` truncation as overflow guard
-18. **Visual metadata generation** → auto-generate cover title, date label, top-right label from transcript when not provided
-19. **Visual overlay generation** → packaged subtitles ASS + cover ASS with finance-style layout
-20. **FFmpeg render** → `filter_complex` strategy (one-pass cut+concat+burn) with segment-file fallback above 80 keep-ranges
-21. **Report generation** → markdown edit report
+**Facts Layer（不可变事实层）:**
+1. extract_audio → 2. detect_vad → 3. transcribe_audio → 4. split_transcript_segments → 5. build_source_words → 6. build_source_segments
+
+**LLM Phases（LLM 只提议，代码校验）:**
+7. **Global Context** — LLM 提取话题、说话人、领域词、疑似错词
+8. **Segment Issue Screening** — LLM 粗筛有问题的 segment
+9. **Window Building** — flagged segment 扩展为五段编辑窗口
+10. **Window Correction** — LLM 提出 DisplayPatch → `validators/correction_validator.py` 硬校验
+11. **Window Dedup** — LLM 提出 DeletionCandidate → `validators/deletion_validator.py` 硬校验
+
+**Rule-based + Rendering（纯规则，不用 LLM）:**
+12. detect_pauses → 13. plan_edits → 14. remap_timeline → 15. generate_subtitles (应用 display_patches) → 16. generate_visual_metadata → 17. generate_visual_overlay → 18. render_video → 19. generate_report
 
 ### Key Architectural Principle
 
@@ -74,7 +65,7 @@ bash scripts/setup_linux.sh
 
 ### Edit Merge Priority (plan_edits.py)
 
-When pause edits and semantic deletes overlap:
+`plan_edits()` 将 `DeletionCandidate` 列表 + pause edits 合并为 `EditDecisionFile`。DeletionCandidate 先转换为带 padding 的 `EditDecision`，然后：
 1. Overlapping delete ranges are merged into a single delete
 2. Delete ranges are subtracted from pause-compress ranges (deletes take priority)
 3. Remaining pause-compress ranges are merged if adjacent
@@ -108,40 +99,37 @@ After overrides, `_apply_mode_overrides()` deep-merges the mode block into the m
 
 - `core/utils.py` — Config loading (YAML + .env + CLI overrides), logging, exception hierarchy (`SkillError`, `ExternalCommandError`, `ProviderError`, `ValidationError`, `ConfigError`), cross-platform command resolution (`resolve_command`), output path catalog
 - `providers/` — Abstract base classes (`ASRProvider`, `LLMProvider` + impl: `FunASRProvider` (local, provider timestamps), `AliyunASRProvider` (cloud, estimated timestamps), `AliyunQwenProvider` (DashScope-compatible LLM))
-- `schemas/models.py` — All Pydantic v2 models: `TranscriptWord`, `TranscriptSegment`, `Transcript`, `SemanticSegment`, `UtteranceUnit`, `EditDecision`, `EditDecisionFile`, `SkillInput`, `SkillOutput`, `VisualMetadata`
-- `prompts/` — LLM prompt templates (Markdown). Active: `unit_semantic_dedup.md`, `unit_analysis_correction.md`, `deletion_continuity_review.md`, `local_false_start_refine.md`, `content_cleanup.md`, `subtitle_correction.md`. Unused/legacy: `semantic_dedup.md`, `local_semantic_dedup.md`
-- `scripts/` — Pipeline step modules + `run.py` entry point. Each file is one pipeline step (see flow above).
+- `schemas/models.py` — 所有 Pydantic v2 模型。核心：`SourceWord`, `SourceSegment`, `DisplayPatch`, `DeletionCandidate`, `GlobalContext`, `SegmentIssue`, `Window`, `CorrectionCandidate`, `ValidatedPatchFile`, `ValidatedDeletionFile`；遗留（仍保留）：`TranscriptWord`, `TranscriptSegment`, `Transcript`, `EditDecision`, `EditDecisionFile`, `SkillInput`, `SkillOutput`, `VisualMetadata`
+- `prompts/` — LLM prompt templates (Markdown). 5 个活跃 prompt: `global_context.md`, `correction_screening.md`, `dedup_screening.md`, `window_correction.md`, `window_dedup.md`
+- `phases/` — LLM 处理阶段：`analyze_global_context.py`, `screen_segment_issues.py`, `build_windows.py`, `correct_window.py`, `dedup_window.py`
+- `validators/` — 硬校验器：`correction_validator.py`, `deletion_validator.py`
+- `scripts/` — Pipeline 步骤模块 + `run.py` 入口。`plan_edits.py` 合并 V2/V2.5 双版本为单一接口
 
-### V2.5 Architecture (Semantic Window Patch Pipeline)
+### 核心架构设计
 
-`run_pipeline_v25()` follows a 19-phase flow with strict separation of concerns:
+**DisplayPatch vs DeletionCandidate 严格分离：**
+- DisplayPatch（步骤10）只影响字幕展示，不改时间轴
+- DeletionCandidate（步骤11）只影响时间轴删除
+- 所有 LLM 删除必须绑定 provider 时间戳的 source word（estimated 被硬拒绝）
 
-**Facts Layer (immutable):**
-1. extract_audio → 2. detect_vad → 3. transcribe_audio → 4. split_transcript_segments → 5. build_source_words → 6. build_source_segments
+**硬校验层替代 LLM review：**
+- `correction_validator.py` + `deletion_validator.py` 纯代码校验
+- 置信度、span 连续性、时间戳来源、删除比例全部硬限位
 
-**LLM Phases (propose only, code validates):**
-7. **Global Context** — LLM extracts topic, speaker aliases, domain terms, likely misrecognitions
-8. **Segment Issue Screening** — LLM flags segments needing correction/dedup (coarse scan)
-9. **Window Building** — flagged segments expanded to 5-segment windows (target + context), adjacent windows merged
+**新配置段:** `global_context`, `screening`, `window`, `correction`, `validation`（见 `config.default.yaml`）
 
-**Correction (display only, no timeline impact):**
-10. **Window Correction** — LLM proposes DisplayPatch (replace_display, replace_display_span, insert_display, delete_display_noise) → `validators/correction_validator.py` hard-validates
+### Validators（硬校验层）
 
-**Dedup (timeline only):**
-11. **Window Dedup** — LLM proposes DeletionCandidate on original source word IDs (using temporary CorrectedView for context only) → `validators/deletion_validator.py` hard-validates
+Two pure-code validators in `validators/` replace LLM review. They hard-enforce safety gates on all LLM output:
 
-**Rule-based + Rendering (no LLM):**
-12. detect_pauses → 13. plan_edits_v25 (deletes > pauses merge) → 14. remap_timeline → 15. generate_subtitles (with display_patches) → 16-19. visual + render
+- **`correction_validator.py`** — Validates every `CorrectionCandidate` from LLM: word_id existence, from_text matches source words, span continuity, confidence threshold, length ratio bounds (0.4–1.6), insert_display char limit (≤2), text similarity checks for multi-char replacements. Outputs `ValidatedPatchFile` (accepted/rejected).
+- **`deletion_validator.py`** — Validates every `DeletionCandidate`: word_id existence, span continuity, **all words must have `timestamp_source=provider`** (estimated timestamps hard-rejected), confidence threshold, max single-delete duration, cumulative delete ratio cap (default 22% of total video). Outputs `ValidatedDeletionFile`. Also provides `resolve_deletion_times()` to convert word_ids → (start, end) with padding.
 
-**Key V2.5 differences from V2:**
-- `correction_validator.py` + `deletion_validator.py` + `boundary_validator.py` replace LLM review — pure code hard checks
-- DisplayPatch only affects subtitles; DeletionCandidate only affects timeline — never mixed
-- CorrectedView is temporary, never written back to source transcript
-- All LLM deletes must bind to provider-timestamp source words (estimated timestamps rejected)
-- `phases/` directory contains V2.5-specific processing modules
-- `validators/` directory contains pure-code validators
+### Docs and Design References
 
-**New config sections:** `global_context`, `screening`, `window`, `correction`, `validation` (see `config.default.yaml`)
+- `docs/architecture-v1.md` — Full V1 architecture with data model tables, pipeline flow, and design rationale.
+- `docs/pipeline-v2-design.md` — V2 redesign proposal: global context → word-level correction → word-level dedup → pause cut.
+- `dev_log.md` — Chronological development log (P1–P14) documenting key decisions, parameter tuning, and real-world test results.
 
 ## Testing Patterns
 
@@ -153,7 +141,23 @@ Tests construct `Transcript`/`TranscriptSegment`/`TranscriptWord` models directl
 
 ```
 Video → Audio (WAV) → VAD segments → ASR Transcript
-  → TranscriptSegments → SemanticSegments → UtteranceUnits
-  → EditDecisions (LLM-proposed, script-validated)
-  → Timeline remap → ASS subtitles + ASS overlay → Rendered video
+  → SourceWords (不可变) → SourceSegments (不可变)
+  → GlobalContext → SegmentIssues → Windows
+  → DisplayPatches (字幕纠错) + DeletionCandidates (时间轴删除)
+  → EditDecisions (硬校验通过) → Timeline remap
+  → ASS subtitles (应用 display_patches) + ASS overlay → Rendered video
 ```
+
+## Agent skills
+
+### Issue tracker
+
+Issues 使用 GitHub Issues (`github.com/201002200303/video-rough-cut-skill`)，通过 `gh` CLI 操作。详见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+使用默认标签名：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human`、`wontfix`。详见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+单上下文仓库。`CONTEXT.md` + `docs/adr/` 位于仓库根目录（尚未创建，由 `grill-with-docs` 按需生成）。详见 `docs/agents/domain.md`。

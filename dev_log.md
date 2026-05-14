@@ -1,5 +1,33 @@
 # 开发日志
 
+## prompt 与文档对齐 canonical_terms（2026-05-14）
+
+- 两筛查/窗口纠错 prompt 补充 `canonical_terms`；删 `segment_issue_screening.md`；`CLAUDE.md` 五 prompt 列表 + `insert_display`≤2 与 `correction_validator` 一致
+
+## correction_screening 同音判断强化（2026-05-14）
+
+- 重写 `asr_homophone_error` 判断规则：从"读音接近"改为**四步判断流程**，强制 LLM 写出拼音后对照 6 类近音模式
+- 新增近音模式分类表：完全同音、声调不同、声母近音、韵母近音、n/l不分、平翘舌不分
+- 正例改为表格格式，每个含拼音对比 + 近音类型标注；新增 3 个正例（越跃强、碳酸锂、反转信号码/吗）
+- 核心原则改为宽松态度：粗筛阶段宁可多标记，后续窗口精修有硬校验兜底过滤。**不设反例表格**，避免反例限制 LLM 筛查嫌疑 segment
+
+## global_context 瘦身 + 摘要（2026-05-14）
+
+- `GlobalContext` 从 8 字段收敛到 6 字段：删 `confirmed_terms`、`domain_terms`、`uncertain_items`，`possible_misrecognitions` → `canonical_terms`，新增 `summary`
+- `canonical_terms` 只提取全文出现 2+ 次且 ASR 翻译不一致的词（对标 `canonical_speaker_name` 思路），不做 segment 级纠错判断
+- `summary`：2-3 句全文摘要，为下游去重 prompt 提供语义锚点
+- `topic` 保留：领域消歧锚点
+- **修复** `window_dedup.md` 字段名对齐 Schema：`delete_text_original_view` → `delete_text_corrected_view`，`before_text` → `before_text_corrected_view`，`after_text` → `after_text_corrected_view`（旧字段名在 `_parse_dedup_response` 中取不到值）
+- **修复** Provider `system_prompt` 残留旧术语
+- 新增 `tests/test_analyze_global_context.py`：7 个单测覆盖正常路径 + 缺字段降级 + Provider 异常降级 + 输出文件写入
+- 全量 128 测试通过
+
+## 字幕未应用 display_patches 修复（2026-05-14）
+
+- 根因：`_build_patch_text_map` 用 `word_ids` 非空筛补丁 → `insert_display` 永不匹配；且 `insert_display` 分支为 `pass`；`remapped_transcript` 无 `word_id` 无法按 `after_word_id` 插入
+- 修复：`TranscriptWord` 增加可选 `word_id`；`build_source_words` 后 `enrich_transcript_with_word_ids`；`remap_timeline` 保留 `word_id`；字幕映射复用 `apply_display_patches`；旧无 `word_id` 转写降级为子串 replace（insert 仍不可用，需重跑流水线）
+- 单测：`test_display_patch_insert_with_word_ids`
+
 ## P1 基础流水线（2026-04-28）
 
 - 建立视频粗剪 pipeline 和核心数据结构。
@@ -152,3 +180,21 @@ D:\project\.venv\Scripts\python.exe -m scripts.dev_smoke_test "D:\video_test\130
 - 字级修剪会校验 provider 时间戳、置信度、删除时长、剩余文本长度，并再次做连贯性复核。
 - 通过复核后生成 `local_false_start_refine` 删除决策，并继续走现有边界 padding 与碎片合并，避免残留人声。
 - 增加单元测试覆盖成功修剪和连贯性失败保留 review；全量测试通过 `85 passed`。
+
+## P15 架构统一与 false_start 检测增强（2026-05-13）
+
+- **V2/V2.5 合并**：删除 `run_pipeline()` (V2) 和 `run_pipeline_v25()`，统一为 `run_pipeline()`；删除 `--pipeline` CLI 参数；`plan_edits_v25()` 重命名为 `plan_edits()`。
+- **LLM 模型切换**：从 `qwen-plus` 更换为 `deepseek-v4-pro`，通过 DashScope 兼容接口调用，测试通过。
+- **清理旧产物**：删除 8 个旧 V2 prompt（`semantic_dedup.md`、`unit_semantic_dedup.md`、`local_false_start_refine.md` 等）和 8 个旧 V2 脚本（`detect_unit_deletions.py`、`build_segments.py` 等），删除 6 个对应测试文件。
+- **false_start 检测改进**：
+  - 筛查 prompt 增加"术语纠正"子类型：说话人脱口而出一个术语后立即换为更精准的同义/近义词，属于改口
+  - 增加跨段检查规则：相邻 segment 合在一起可能构成改口，不要孤立看每个段
+  - 增加 ASR 错字与术语改口共存的标记规则
+  - 去重 prompt 保守原则改为通用表述：相近但不完全相同的两个说法，需判断是强调递进还是脱口修正
+- **对比实验基础设施**：新增 `CONTEXT.md`（领域术语定义）、`docs/adr/0001-comparison-experiment.md`（对比实验设计决策）、`docs/agents/` 工程技能配置
+- **修复**：`resolve_command()` 增加 winget 安装路径搜索，自动发现 FFmpeg
+- 全量测试通过 `120 passed, 1 skipped`
+
+## Claude Code + qnaigc 示例（2026-05-13）
+
+- 新增 `.claude/settings.qnaigc-gpt55.example.json`：`env` 中配置 `ANTHROPIC_BASE_URL` / `ANTHROPIC_API_KEY` 与各槽位模型映射为 `gpt-5.5`；仅当网关提供 **Anthropic `/v1/messages` 兼容** 时可直接用，纯 OpenAI 中继需 LiteLLM 等转接。
